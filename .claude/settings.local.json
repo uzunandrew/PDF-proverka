@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell.exe -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Write-Host done')",
+      "Bash(powershell.exe -NoProfile -Command 'Get-Process -Id 106960 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName; Get-Process -Id 35624 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName; Write-Host check-done')",
+      "Bash(python -c:*)",
+      "Bash(powershell.exe -NoProfile -Command 'Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object OwningProcess | Format-Table -AutoSize')",
+      "Bash(powershell.exe -NoProfile -Command:*)",
+      "Bash(findstr:*)",
+      "Bash(claude:*)",
+      "Bash(set:*)",
+      "Bash(find:*)",
+      "Bash(tasklist:*)",
+      "Bash(python -X utf8 -c:*)",
+      "Bash(head:*)",
+      "Bash(python:*)",
+      "Bash(powershell.exe -Command \"Get-Process python* -ErrorAction SilentlyContinue | Select-Object Id, ProcessName | Format-Table -AutoSize\")",
+      "Bash(powershell.exe -Command \"Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object OwningProcess, State | Format-Table -AutoSize\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 15320 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1; Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object OwningProcess, State\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 95244 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count\")",
+      "Bash(powershell.exe -Command \"Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Select-Object OwningProcess, State\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 50768 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; try { Get-NetTCPConnection -LocalPort 8000 -ErrorAction Stop } catch { Write-Output ''Port 8000 is FREE'' }\")",
+      "Bash(powershell.exe -Command \"Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_OwningProcess -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 3; try { $c = Get-NetTCPConnection -LocalPort 8000 -ErrorAction Stop; ''STILL IN USE'' } catch { ''Port 8000 is FREE'' }\")",
+      "Bash(powershell.exe -Command \"Start-Sleep -Seconds 3; try { Get-NetTCPConnection -LocalPort 8000 -ErrorAction Stop | Select-Object OwningProcess, State } catch { ''NOT LISTENING YET'' }\")",
+      "Bash(python3:*)",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 15320 -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"D:\\\\Отедел Системного Анализа\\\\1. Calude code\\\\kill_port.ps1\")",
+      "Bash(done)",
+      "Bash(gh auth status)"
+    ]
+  }
+}

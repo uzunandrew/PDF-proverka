@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(powershell *)",
+      "Bash(pip *)",
+      "Bash(pip3 *)",
+      "Bash(cmd *)",
+      "Bash(dir *)",
+      "Bash(type *)",
+      "Bash(ls *)",
+      "Bash(mkdir *)",
+      "Bash(where *)",
+      "Bash(wc *)",
+      "Bash(tesseract *)",
+      "Bash(chcp *)",
+      "Read",
+      "Write",
+      "Edit",
+      "Grep",
+      "Glob",
+      "WebSearch",
+      "WebFetch"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .claude/hooks/load_context.py",
+            "statusMessage": "Загрузка контекста проекта..."
+          }
+        ]
+      }
+    ]
+  }
+}

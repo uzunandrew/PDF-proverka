@@ -1,0 +1,138 @@
+{
+  "_schema_version": "1.0",
+  "_description": "Stage 03: Final consolidated findings. MASTER output file. All questions answered from here.",
+  "_file": "_output/03_findings.json",
+  "_reads_from": ["_output/01_text_analysis.json", "_output/02_tiles_analysis.json"],
+
+  "meta": {
+    "project_id":       "133-23-GK-EM1",
+    "audit_completed":  "2026-02-27T00:05:00",
+    "auditor":          "Claude (automated audit)",
+    "total_findings":   6,
+    "by_severity": {
+      "КРИТИЧЕСКОЕ":          2,
+      "СУЩЕСТВЕННОЕ":         1,
+      "ЭКОНОМИЧЕСКОЕ":        0,
+      "ЭКСПЛУАТАЦИОННОЕ":     1,
+      "РЕКОМЕНДАТЕЛЬНОЕ":     1,
+      "ПРОВЕРИТЬ ПО СМЕЖНЫМ": 1,
+      "СНЯТО":                0
+    }
+  },
+
+  "findings": [
+    {
+      "id":           "F-001",
+      "severity":     "КРИТИЧЕСКОЕ",
+      "category":     "current_transformer",
+      "sheet":        "Лист 7 (Однолинейная схема)",
+      "source": {
+        "type":       "tile",
+        "tile":       "page_07_r2c2.png",
+        "stage":      "02_tiles"
+      },
+      "finding":      "ТТ ВП-ППУ: расчётный ток КЗ Iкз=0.29А, тогда как требуется ≥ 10·In = 10·0.2 = 2А",
+      "norm":         "ПУЭ п.1.5.17 (применять добровольно; аналог — СП 256.1325800.2016, п.14.9)",
+      "recommendation": "Пересмотреть выбор ТТ: выбрать ТТ с In≤0.029А либо обосновать расчётом",
+      "md_pdf_discrepancy": null
+    },
+    {
+      "id":           "F-002",
+      "severity":     "КРИТИЧЕСКОЕ",
+      "category":     "normative_refs",
+      "sheet":        "ПЗ стр. 4",
+      "source": {
+        "type":       "text",
+        "file":       "extracted_text.txt",
+        "page_pdf":   4,
+        "stage":      "01_text"
+      },
+      "finding":      "Ссылка на ГОСТ Р 53313-2009 — отменён с 01.05.2021 без замены в части ОКЛ",
+      "norm":         "ГОСТ Р 53313-2009 — ОТМЕНЁН. Актуальный: СП 6.13130.2021, приложение А",
+      "recommendation": "Заменить ссылку на СП 6.13130.2021. Проверить соответствие применённых ОКЛ требованиям актуального СП.",
+      "md_pdf_discrepancy": null
+    },
+    {
+      "id":           "F-003",
+      "severity":     "СУЩЕСТВЕННОЕ",
+      "category":     "normative_refs",
+      "sheet":        "ПЗ стр. 3",
+      "source": {
+        "type":       "text",
+        "file":       "extracted_text.txt",
+        "page_pdf":   3,
+        "stage":      "01_text"
+      },
+      "finding":      "СП 256.1325800.2016 указан в редакции изм. 1-5; действует редакция с изм. 1-7 (с 26.01.2025)",
+      "norm":         "СП 256.1325800.2016, изм. 7 (введено 26.01.2025)",
+      "recommendation": "Актуализировать ссылку. Проверить, не изменились ли применимые требования в изм. 6-7.",
+      "md_pdf_discrepancy": null
+    },
+    {
+      "id":           "F-004",
+      "severity":     "СУЩЕСТВЕННОЕ",
+      "category":     "documentation",
+      "sheet":        "Лист 9 (схемы щитов)",
+      "source": {
+        "type":       "tile",
+        "tile":       "page_09_r1c2.png",
+        "confirmed_by": "visual + text both",
+        "stage":      "02_tiles"
+      },
+      "finding":      "Дублирование обозначения группы Гр.В.4 в щите ЩД-ДН1 — два разных автомата с одинаковым именем",
+      "norm":         "ГОСТ Р 21.210-2014, п.4.2 — уникальность обозначений цепей",
+      "recommendation": "Переименовать вторую группу (например, Гр.В.4а или Гр.В.5).",
+      "md_pdf_discrepancy": {
+        "md_value":   "Гр.В.4 (дважды)",
+        "pdf_value":  "Гр.В.4 (дважды)",
+        "verdict":    "Совпадает — ошибка в самом проекте"
+      }
+    },
+    {
+      "id":           "F-005",
+      "severity":     "РЕКОМЕНДАТЕЛЬНОЕ",
+      "category":     "phase_balance",
+      "sheet":        "Лист 9, щит ЩД-ДН1",
+      "source": {
+        "type":       "tile",
+        "tile":       "page_09_r1c2.png",
+        "stage":      "02_tiles"
+      },
+      "finding":      "Перекос фаз в ЩД-ДН1 составляет 12% (норма ≤15%, рекомендуется ≤5%)",
+      "norm":         "ГОСТ 32144-2013, п.5.4 — предельное значение 15%",
+      "recommendation": "Перераспределить нагрузки между фазами для снижения перекоса до 5-8%.",
+      "md_pdf_discrepancy": null
+    },
+    {
+      "id":           "F-006",
+      "severity":     "ПРОВЕРИТЬ ПО СМЕЖНЫМ",
+      "category":     "okl_certification",
+      "sheet":        "ПЗ + Спецификация",
+      "source": {
+        "type":       "text",
+        "file":       "extracted_text.txt",
+        "stage":      "01_text"
+      },
+      "finding":      "В спецификации ОКЛ указано «или аналог» — требуется подтверждение сертификатом испытаний системы ОКЛ",
+      "norm":         "СП 6.13130.2021, п.4.2 — ОКЛ должна быть испытана как система",
+      "recommendation": "Убрать «или аналог». Указать конкретный кабель из сертифицированной системы ОКЛ.",
+      "md_pdf_discrepancy": null
+    }
+  ],
+
+  "quick_index": {
+    "by_category": {
+      "current_transformer": ["F-001"],
+      "normative_refs":      ["F-002", "F-003"],
+      "documentation":       ["F-004"],
+      "phase_balance":       ["F-005"],
+      "okl_certification":   ["F-006"]
+    },
+    "by_sheet": {
+      "page_07": ["F-001"],
+      "page_09": ["F-004", "F-005"],
+      "pz":      ["F-002", "F-003", "F-006"]
+    },
+    "needs_client_action": ["F-001", "F-002", "F-004"]
+  }
+}

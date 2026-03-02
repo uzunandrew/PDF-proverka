@@ -1,0 +1,90 @@
+{
+  "_schema_version": "1.0",
+  "_description": "Stage 01: Text analysis of extracted PDF. Written after reading extracted_text.txt.",
+  "_file": "_output/01_text_analysis.json",
+  "_reads_from": ["_output/00_init.json", "_output/extracted_text.txt"],
+
+  "meta": {
+    "pages_read": 21,
+    "timestamp":  "2026-02-26T23:56:00"
+  },
+
+  "project_params": {
+    "power_supply_category": "I+II",
+    "voltage":               "0.4 кВ",
+    "total_load_kVA":        480,
+    "cos_phi":               0.92,
+    "grounding_system":      "TN-C-S",
+    "transformer_count":     2,
+    "transformer_kVA":       630
+  },
+
+  "normative_refs_found": [
+    {
+      "doc":         "СП 256.1325800.2016",
+      "stated_in_pz": "изм. 1-5",
+      "actual_amend": "изм. 1-7",
+      "status":       "outdated_edition",
+      "severity":     "minor",
+      "page_pz":      3
+    },
+    {
+      "doc":         "ГОСТ Р 53313-2009",
+      "status":      "cancelled",
+      "replacement":  "ГОСТ 12.1.004-91 / СП 4.13130.2013",
+      "severity":     "critical",
+      "page_pz":      4
+    },
+    {
+      "doc":         "СП 6.13130.2021",
+      "status":      "actual",
+      "severity":     "ok",
+      "page_pz":      4
+    }
+  ],
+
+  "cable_marks_mentioned": [
+    { "mark": "ППГнг(А)-HF",   "pages": [5, 8, 12], "status": "valid" },
+    { "mark": "ППГнг(А)-FRHF", "pages": [5, 9],     "status": "valid" },
+    { "mark": "КВВГнг(А)-LS",  "pages": [7],         "status": "valid" }
+  ],
+
+  "protection_devices": [
+    { "panel": "ЩД-ДН1", "breaker": "ВА-105 3P D10A",  "group": "Гр.Н.1", "cable_section": "2.5" },
+    { "panel": "ЩД-ДН1", "breaker": "ВА-105 3P D10A",  "group": "Гр.Н.2", "cable_section": "2.5" },
+    { "panel": "ЩД-ДН1", "breaker": "ДИФ C16A 30мА",   "group": "Гр.В.4", "cable_section": "2.5" },
+    { "panel": "ЩД-ДН1", "breaker": "ДИФ C16A 30мА",   "group": "Гр.В.4", "cable_section": "2.5",
+      "note": "DUPLICATE group name" }
+  ],
+
+  "preliminary_findings": [
+    {
+      "id":       "T-001",
+      "severity": "СУЩЕСТВЕННО",
+      "category": "normative_refs",
+      "source":   { "file": "extracted_text.txt", "page_pdf": 3 },
+      "finding":  "СП 256.1325800.2016 указан без изм. 6-7 (действует с 26.01.2025)",
+      "norm":     "Требование актуальности нормативной базы",
+      "needs_tile_verification": false
+    },
+    {
+      "id":       "T-002",
+      "severity": "КРИТИЧНО",
+      "category": "normative_refs",
+      "source":   { "file": "extracted_text.txt", "page_pdf": 4 },
+      "finding":  "Ссылка на ГОСТ Р 53313-2009 — документ отменён с 01.05.2021",
+      "norm":     "Отменён. Применять актуальные документы по пожарной безопасности",
+      "needs_tile_verification": false
+    },
+    {
+      "id":       "T-003",
+      "severity": "СУЩЕСТВЕННО",
+      "category": "documentation",
+      "source":   { "file": "extracted_text.txt", "page_pdf": 12 },
+      "finding":  "Дублирование имени группы Гр.В.4 в щите ЩД-ДН1",
+      "norm":     "ГОСТ Р 21.210-2014 — требования к обозначению цепей",
+      "needs_tile_verification": true,
+      "verify_tile": "page_09_r1c2.png"
+    }
+  ]
+}

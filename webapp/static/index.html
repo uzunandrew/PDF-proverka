@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Manager</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <link rel="stylesheet" href="/static/css/styles.css?v=2">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo" @click="navigate('/')">Audit Manager</h1>
+            </div>
+            <div class="header-right">
+                <span class="ws-status" :class="wsConnected ? 'connected' : 'disconnected'">
+                    {{ wsConnected ? 'WS' : 'WS' }}
+                </span>
+            </div>
+        </header>
+
+        <!-- Navigation breadcrumb -->
+        <nav class="breadcrumb" v-if="currentView !== 'dashboard'">
+            <a href="#" @click.prevent="navigate('/')">Проекты</a>
+            <span v-if="currentProject"> / {{ currentProject.name }}</span>
+            <span v-if="currentView === 'findings'"> / Замечания</span>
+            <span v-if="currentView === 'tiles'"> / Тайлы</span>
+            <span v-if="currentView === 'log'"> / Лог</span>
+        </nav>
+
+        <!-- ═══ Dashboard ═══ -->
+        <div v-if="currentView === 'dashboard'" class="container">
+            <div class="dashboard-header">
+                <h2>Проекты ({{ projects.length }})</h2>
+                <div class="dashboard-actions">
+                    <button class="btn btn-accent" @click="startAllProjects"
+                            :disabled="loading || allRunning"
+                            :title="allRunning ? 'Массовый аудит уже запущен' : 'Запустить полный конвейер для всех проектов последовательно'">
+                        {{ allRunning ? 'Аудит всех...' : '▶ Запустить все' }}
+                    </button>
+                    <button class="btn btn-primary" @click="refreshProjects" :disabled="loading">
+                        {{ loading ? 'Обновление...' : 'Обновить' }}
+                    </button>
+                </div>
+            </div>
+
+            <div class="projects-grid">
+                <div v-for="p in projects" :key="p.project_id"
+                     class="project-card" :class="{'project-card--ready': p.has_tiles, 'project-card--running': isProjectRunning(p.project_id)}">
+                    <div class="project-card__header">
+                        <h3>{{ p.name }}</h3>
+                        <span class="section-badge">{{ p.section }}</span>
+                    </div>
+                    <p class="project-card__desc">{{ p.description }}</p>
+
+                    <!-- Pipeline -->
+                    <div class="pipeline">
+                        <div class="pipeline-step" :class="stepClass(p.pipeline.init)">00</div>
+                        <div class="pipeline-line"></div>
+                        <div class="pipeline-step" :class="stepClass(p.pipeline.text_analysis)">01</div>
+                        <div class="pipeline-line"></div>
+                        <div class="pipeline-step" :class="stepClass(p.pipeline.tiles_analysis)">02</div>
+                        <div class="pipeline-line"></div>
+                        <div class="pipeline-step" :class="stepClass(p.pipeline.findings)">03</div>
+                        <div class="pipeline-line"></div>
+                        <div class="pipeline-step" :class="stepClass(p.pipeline.norms_verified)">03a</div>
+                    </div>
+
+                    <!-- Live Status Indicator -->
+                    <div v-if="isProjectRunning(p.project_id)" class="live-status-bar"
+                         :class="{'live-status-bar--stale': isHeartbeatStale(p.project_id)}">
+                        <div class="spinner"></div>
+                        <span class="heartbeat-dot"
+                              :class="isHeartbeatStale(p.project_id) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
+                        <span class="status-text">{{ batchProgressText(p.project_id) }}</span>
+                        <span class="status-eta" v-if="getHeartbeatInfo(p.project_id)?.eta_sec">
+                            ETA: {{ formatETA(getHeartbeatInfo(p.project_id).eta_sec) }}
+                        </span>
+                        <span class="status-detail" v-if="getProjectLiveInfo(p.project_id)?.started_at">
+                            {{ formatElapsed(getProjectLiveInfo(p.project_id).started_at) }}
+                        </span>
+                    </div>
+                    <div v-if="isProjectRunning(p.project_id)" class="live-progress-mini">
+                        <div class="live-progress-mini__fill"
+                             :style="{width: batchPercent(p.project_id) + '%'}"></div>
+                    </div>
+
+                    <!-- Stats -->
+                    <div class="project-card__stats">
+                        <div v-if="p.has_pdf" class="stat">PDF {{ p.pdf_size_mb }} MB</div>
+                        <div v-if="p.has_md_file" class="stat stat--md">MD {{ p.md_file_size_kb }} KB</div>
+                        <div v-if="p.has_tiles" class="stat">{{ p.tile_count }} tiles</div>
+                        <div v-if="p.total_batches > 0" class="stat">
+                            Batches: {{ p.completed_batches }}/{{ p.total_batches }}
+                            <template v-if="p.total_batches > 0">
+                                ({{ Math.round(p.completed_batches / p.total_batches * 100) }}%)
+                            </template>
+                        </div>
+                    </div>
+
+                    <!-- Severity badges -->
+                    <div v-if="p.findings_count > 0" class="severity-badges">
+                        <span v-for="(count, sev) in p.findings_by_severity" :key="sev"
+                              class="sev-badge" :class="'sev-' + sevClass(sev)">
+                            {{ count }}
+                        </span>
+                        <span class="findings-total">= {{ p.findings_count }}</span>
+                    </div>
+
+                    <!-- Actions -->
+                    <div class="project-card__actions">
+                        <button class="btn btn-sm" @click="navigate('/project/' + p.project_id)">
+                            Открыть
+                        </button>
+                        <button v-if="p.findings_count > 0" class="btn btn-sm btn-outline"
+                                @click="navigate('/project/' + p.project_id + '/findings')">
+                            Замечания
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ Project Detail ═══ -->
+        <div v-if="currentView === 'project'" class="container">
+            <div v-if="currentProject" class="project-detail">
+                <h2>{{ currentProject.name }}</h2>
+                <p class="subtitle">{{ currentProject.description }}</p>
+                <p v-if="currentProject.object" class="object-name">{{ currentProject.object }}</p>
+
+                <!-- Live Status Banner -->
+                <div v-if="currentProjectLive && currentProjectLive.running" class="live-banner"
+                     :class="{'live-banner--stale': isHeartbeatStale(currentProject.project_id)}">
+                    <div class="spinner-lg"></div>
+                    <span class="heartbeat-dot heartbeat-dot--lg"
+                          :class="isHeartbeatStale(currentProject.project_id) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
+                    <div class="live-banner__info">
+                        <div class="live-banner__stage">
+                            {{ stageLabel(currentProjectLive.stage) }}
+                            <span class="heartbeat-label"
+                                  v-if="!isHeartbeatStale(currentProject.project_id) && secondsSinceHeartbeat(currentProject.project_id) < 999">
+                                Процесс активен
+                            </span>
+                            <span class="heartbeat-label heartbeat-label--stale"
+                                  v-else-if="isHeartbeatStale(currentProject.project_id)">
+                                Claude думает...
+                            </span>
+                        </div>
+                        <div class="live-banner__detail">
+                            <template v-if="currentProjectLive.batch_total > 0">
+                                Пакет {{ currentProjectLive.batch_completed }} из {{ currentProjectLive.batch_total }}
+                                ({{ Math.round(currentProjectLive.batch_completed / currentProjectLive.batch_total * 100) }}%)
+                            </template>
+                            <template v-else-if="currentProjectLive.progress_total > 0">
+                                {{ currentProjectLive.progress_current }} / {{ currentProjectLive.progress_total }}
+                            </template>
+                            <template v-else>
+                                Выполняется...
+                            </template>
+                        </div>
+                        <div class="live-banner__eta" v-if="getHeartbeatInfo(currentProject.project_id)?.eta_sec">
+                            ETA: {{ formatETA(getHeartbeatInfo(currentProject.project_id).eta_sec) }}
+                        </div>
+                    </div>
+                    <div class="live-banner__elapsed" v-if="currentProjectLive.started_at">
+                        {{ formatElapsed(currentProjectLive.started_at) }}
+                    </div>
+                </div>
+
+                <!-- Pipeline visual -->
+                <div class="pipeline-detail">
+                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.init)">
+                        <div class="stage-num">00</div>
+                        <div class="stage-label">Init</div>
+                    </div>
+                    <div class="pipeline-arrow">&rarr;</div>
+                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.text_analysis)">
+                        <div class="stage-num">01</div>
+                        <div class="stage-label">Текст</div>
+                    </div>
+                    <div class="pipeline-arrow">&rarr;</div>
+                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.tiles_analysis)">
+                        <div class="stage-num">02</div>
+                        <div class="stage-label">Тайлы</div>
+                    </div>
+                    <div class="pipeline-arrow">&rarr;</div>
+                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.findings)">
+                        <div class="stage-num">03</div>
+                        <div class="stage-label">Свод</div>
+                    </div>
+                    <div class="pipeline-arrow">&rarr;</div>
+                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.norms_verified)">
+                        <div class="stage-num">03a</div>
+                        <div class="stage-label">Нормы</div>
+                    </div>
+                </div>
+
+                <!-- Info cards -->
+                <div class="info-grid">
+                    <div class="info-card">
+                        <div class="info-card__icon">PDF</div>
+                        <div class="info-card__text">
+                            <template v-if="currentProject.has_pdf">
+                                {{ currentProject.pdf_size_mb }} MB
+                            </template>
+                            <template v-else>Нет файла</template>
+                        </div>
+                    </div>
+                    <div class="info-card" :class="{'info-card--primary': currentProject.has_md_file}">
+                        <div class="info-card__icon">MD</div>
+                        <div class="info-card__text">
+                            <template v-if="currentProject.has_md_file">
+                                {{ currentProject.md_file_size_kb }} KB
+                                <div class="info-card__sub">{{ currentProject.md_file_name }}</div>
+                                <div class="info-card__badge">основной источник</div>
+                            </template>
+                            <template v-else>Нет файла</template>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card__icon">TXT</div>
+                        <div class="info-card__text">
+                            <template v-if="currentProject.has_extracted_text">
+                                {{ currentProject.text_size_kb }} KB
+                                <div v-if="currentProject.has_md_file" class="info-card__sub info-card__sub--muted">(fallback)</div>
+                            </template>
+                            <template v-else>Не извлечён</template>
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card__icon">Tiles</div>
+                        <div class="info-card__text">
+                            {{ currentProject.tile_count }} ({{ currentProject.tile_pages }} стр.)
+                        </div>
+                    </div>
+                    <div class="info-card">
+                        <div class="info-card__icon">Batches</div>
+                        <div class="info-card__text">
+                            {{ currentProject.completed_batches }}/{{ currentProject.total_batches }}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progress bar for tiles -->
+                <div v-if="currentProject.total_batches > 0" class="progress-section">
+                    <div class="progress-label">
+                        Пакетный анализ тайлов:
+                        {{ Math.round(currentProject.completed_batches / currentProject.total_batches * 100) }}%
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"
+                             :style="{width: (currentProject.completed_batches / currentProject.total_batches * 100) + '%'}">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Severity summary -->
+                <div v-if="currentProject.findings_count > 0" class="findings-summary">
+                    <h3>Замечания: {{ currentProject.findings_count }}</h3>
+                    <div class="severity-badges severity-badges--large">
+                        <span v-for="(count, sev) in currentProject.findings_by_severity" :key="sev"
+                              class="sev-badge" :class="'sev-' + sevClass(sev)">
+                            {{ sevIcon(sev) }} {{ count }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Audit controls -->
+                <div class="audit-controls">
+                    <h3>Управление аудитом</h3>
+                    <div class="audit-buttons">
+                        <button class="btn" @click="startPrepare(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)">
+                            Подготовка
+                        </button>
+                        <button class="btn" @click="startTileAudit(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id) || !currentProject.has_tiles">
+                            Анализ тайлов
+                        </button>
+                        <button class="btn" @click="startMainAudit(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)">
+                            Основной аудит
+                        </button>
+                        <button class="btn" @click="startNormVerify(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id) || currentProject.findings_count === 0"
+                                :title="currentProject.findings_count === 0 ? 'Сначала выполните аудит (нужен 03_findings.json)' : 'Проверить актуальность нормативных ссылок через WebSearch'">
+                            Верификация норм
+                        </button>
+                        <button class="btn btn-primary" @click="startFullAudit(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)">
+                            Полный конвейер
+                        </button>
+                        <button class="btn btn-danger" @click="cancelAudit(currentProject.project_id)"
+                                v-if="auditRunning || isProjectRunning(currentProject.project_id)">
+                            Отменить
+                        </button>
+                    </div>
+                    <!-- Resume button -->
+                    <div v-if="resumeInfo && resumeInfo.can_resume && !auditRunning && !isProjectRunning(currentProject.project_id)"
+                         style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <button class="btn btn-primary"
+                                    @click="resumePipeline(currentProject.project_id)">
+                                Продолжить
+                            </button>
+                            <span style="font-size: 0.9em; color: #856404;">
+                                {{ resumeInfo.stage_label }}
+                                <span v-if="resumeInfo.detail" style="opacity: 0.8;">({{ resumeInfo.detail }})</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div v-if="currentProject.completed_batches > 0 && currentProject.completed_batches < currentProject.total_batches"
+                         style="margin-top: 8px;">
+                        <button class="btn btn-sm"
+                                @click="startTileAudit(currentProject.project_id, currentProject.completed_batches + 1)"
+                                :disabled="auditRunning">
+                            Продолжить с пакета {{ currentProject.completed_batches + 1 }}
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Nav buttons -->
+                <div class="project-nav">
+                    <button class="btn"
+                            @click="navigate('/project/' + currentProject.project_id + '/findings')"
+                            :disabled="currentProject.findings_count === 0">
+                        Замечания ({{ currentProject.findings_count }})
+                    </button>
+                    <button class="btn"
+                            @click="navigate('/project/' + currentProject.project_id + '/tiles')"
+                            :disabled="!currentProject.has_tiles">
+                        Тайлы ({{ currentProject.tile_count }})
+                    </button>
+                    <button class="btn"
+                            @click="navigate('/project/' + currentProject.project_id + '/log')">
+                        Лог аудита
+                    </button>
+                    <button class="btn" @click="generateExcel()">
+                        Excel-отчёт
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ Findings Table ═══ -->
+        <div v-if="currentView === 'findings'" class="container">
+            <div class="findings-page">
+                <h2>Замечания: {{ findingsData?.project_id }}</h2>
+
+                <!-- Filters -->
+                <div class="filters">
+                    <select v-model="filterSeverity" class="filter-select">
+                        <option value="">Все критичности</option>
+                        <option v-for="sev in severityOptions" :key="sev" :value="sev">{{ sev }}</option>
+                    </select>
+                    <input v-model="filterSearch" class="filter-input"
+                           placeholder="Поиск по тексту..." @input="debounceSearch">
+                </div>
+
+                <!-- Summary -->
+                <div v-if="findingsData" class="severity-badges severity-badges--large">
+                    <span v-for="(count, sev) in findingsData.by_severity" :key="sev"
+                          class="sev-badge" :class="'sev-' + sevClass(sev)"
+                          @click="filterSeverity = sev" style="cursor:pointer">
+                        {{ sevIcon(sev) }} {{ count }}
+                    </span>
+                    <span class="findings-total">Всего: {{ findingsData.total }}</span>
+                </div>
+
+                <!-- Table -->
+                <div class="table-container">
+                    <table class="findings-table" v-if="findingsData">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Критичность</th>
+                                <th>Лист</th>
+                                <th>Замечание</th>
+                                <th>Норма</th>
+                                <th>Рекомендация</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="f in filteredFindings" :key="f.id"
+                                :class="'row-' + sevClass(f.severity)">
+                                <td class="id-cell">{{ f.id }}</td>
+                                <td>
+                                    <span class="sev-badge sev-badge--sm" :class="'sev-' + sevClass(f.severity)">
+                                        {{ f.severity }}
+                                    </span>
+                                </td>
+                                <td>{{ f.sheet }}</td>
+                                <td class="desc-cell">{{ f.problem || f.finding || f.description || '' }}</td>
+                                <td class="norm-cell">{{ f.norm }}</td>
+                                <td class="rec-cell">{{ f.solution || f.recommendation || '' }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div v-else class="empty-state">
+                        Замечания не найдены. Аудит ещё не проводился.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ Tiles Viewer ═══ -->
+        <div v-if="currentView === 'tiles'" class="container">
+            <div class="tiles-page">
+                <h2>Тайлы: {{ tilesProjectId }}</h2>
+
+                <!-- Page selector -->
+                <div class="page-selector">
+                    <button v-for="pg in tilePages" :key="pg.page_num"
+                            class="btn btn-sm" :class="{'btn-primary': selectedPage === pg.page_num}"
+                            @click="selectedPage = pg.page_num">
+                        Стр. {{ pg.page_num }} ({{ pg.tile_count }})
+                    </button>
+                </div>
+
+                <!-- Tile grid -->
+                <div v-if="currentPageTiles" class="tile-grid"
+                     :style="{gridTemplateColumns: 'repeat(' + currentPageTiles.cols + ', 1fr)'}">
+                    <div v-for="tile in currentPageTiles.tiles" :key="tile"
+                         class="tile-item" @click="openTile(tile)">
+                        <img :src="tileImageUrl(tilesProjectId, currentPageTiles.page_num, tile)"
+                             :alt="tile" loading="lazy">
+                        <span class="tile-label">{{ tile.replace('.png','') }}</span>
+                    </div>
+                </div>
+
+                <!-- Tile modal -->
+                <div v-if="selectedTile" class="modal-overlay" @click="selectedTile = null">
+                    <div class="modal-content" @click.stop>
+                        <button class="modal-close" @click="selectedTile = null">&times;</button>
+                        <img :src="tileImageUrl(tilesProjectId, selectedPage, selectedTile)"
+                             class="tile-full">
+                        <p class="tile-modal-label">{{ selectedTile }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ Live Log ═══ -->
+        <div v-if="currentView === 'log'" class="container">
+            <div class="log-page">
+                <h2>Лог аудита: {{ decodeURIComponent(logProjectId) }}</h2>
+                <div class="log-controls">
+                    <button class="btn btn-sm" @click="clearLog">Очистить</button>
+                    <label><input type="checkbox" v-model="logAutoScroll"> Автоскролл</label>
+                </div>
+                <div class="log-container" ref="logContainer">
+                    <div v-for="(entry, i) in logEntries" :key="i"
+                         class="log-entry" :class="'log-' + entry.level">
+                        <span class="log-time">{{ entry.time }}</span>
+                        <span class="log-msg">{{ entry.message }}</span>
+                    </div>
+                    <div v-if="logEntries.length === 0" class="empty-state">
+                        Лог пуст. Запустите аудит для получения событий.
+                    </div>
+                </div>
+                <!-- Heartbeat bar under log -->
+                <div v-if="isProjectRunning(logProjectId)" class="log-heartbeat"
+                     :class="{'log-heartbeat--stale': isHeartbeatStale(logProjectId)}">
+                    <span class="heartbeat-dot"
+                          :class="isHeartbeatStale(logProjectId) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
+                    <span v-if="!isHeartbeatStale(logProjectId) && secondsSinceHeartbeat(logProjectId) < 999">
+                        Процесс активен — последний heartbeat {{ secondsSinceHeartbeat(logProjectId) }} сек назад
+                    </span>
+                    <span v-else-if="isHeartbeatStale(logProjectId)">
+                        Claude думает... (нет вывода {{ secondsSinceHeartbeat(logProjectId) }} сек)
+                    </span>
+                    <span v-else>
+                        Ожидание heartbeat...
+                    </span>
+                    <span class="log-heartbeat__eta" v-if="getHeartbeatInfo(logProjectId)?.eta_sec">
+                        ETA: {{ formatETA(getHeartbeatInfo(logProjectId).eta_sec) }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js?v=2"></script>
+</body>
+</html>
