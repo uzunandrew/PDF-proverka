@@ -12,6 +12,9 @@ BASE_DIR = Path(r"D:\Отедел Системного Анализа\1. Calude 
 # Папка с проектами
 PROJECTS_DIR = BASE_DIR / "projects"
 
+# Папка для итоговых отчётов
+REPORTS_DIR = BASE_DIR / "отчет"
+
 # Нормативный справочник
 NORMS_FILE = BASE_DIR / "norms_reference.md"
 

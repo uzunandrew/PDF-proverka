@@ -239,6 +239,7 @@ FIELD_FUNCS = {
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 PROJECTS_DIR = os.path.join(BASE_DIR, "projects")
+REPORTS_DIR  = os.path.join(BASE_DIR, "отчет")
 
 
 def find_projects(specific_paths=None) -> list:
@@ -631,7 +632,8 @@ def main():
                     else os.path.join(BASE_DIR, args.out))
     else:
         ts = datetime.now().strftime("%Y%m%d_%H%M")
-        out_path = os.path.join(BASE_DIR, f"audit_report_{ts}.xlsx")
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+        out_path = os.path.join(REPORTS_DIR, f"audit_report_{ts}.xlsx")
 
     wb.save(out_path)
     print(f"\n  Файл сохранён: {out_path}")
