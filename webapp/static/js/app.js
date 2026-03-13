@@ -8,6 +8,7 @@ const app = createApp({
     setup() {
         // ─── State ───
         const currentView = ref('dashboard');
+        const blockBackRoute = ref(null);  // куда вернуться из просмотра блока
         const currentProjectId = ref(null);
         const currentProject = ref(null);
         const projects = ref([]);
@@ -39,6 +40,8 @@ const app = createApp({
         // Blocks (OCR)
         const blocksProjectId = ref('');
         const blockPages = ref([]);
+        const blockCropErrors = ref(0);
+        const blockTotalExpected = ref(0);
         const selectedBlockPage = ref(null);
         const selectedBlock = ref(null);
         const blockAnalysis = ref({});
@@ -364,6 +367,18 @@ const app = createApp({
             return heartbeatData.value[projectId] || null;
         }
 
+        // Этапы, где работает Claude CLI (и есть heartbeat)
+        // Остальные (crop_blocks, excel, merge, prepare) — Python-скрипты без Claude
+        function isClaudeStage(stage) {
+            const claudeStages = ['text_analysis', 'block_analysis', 'findings_merge', 'norm_verify', 'norm_fix', 'optimization', 'tile_audit', 'main_audit'];
+            return claudeStages.includes(stage);
+        }
+
+        function getRunningStage(projectId) {
+            const r = liveStatus.value.running ? liveStatus.value.running[projectId] : null;
+            return r ? r.stage : null;
+        }
+
         function formatETA(etaSec) {
             if (etaSec == null || etaSec <= 0) return '';
             if (etaSec > 3600) {
@@ -425,6 +440,8 @@ const app = createApp({
 
         function heartbeatStatusText(projectId) {
             if (!isProjectRunning(projectId)) return '';
+            const stage = getRunningStage(projectId);
+            if (!isClaudeStage(stage)) return 'Выполняется...';
             const sec = secondsSinceHeartbeat(projectId);
             if (sec > 60) return `Claude думает... (нет вывода ${sec} сек)`;
             if (sec < 999) return `Процесс активен`;
@@ -454,6 +471,7 @@ const app = createApp({
             } else if (hash.match(/^\/project\/([^/]+)\/findings$/)) {
                 const id = decodeURIComponent(hash.match(/^\/project\/([^/]+)\/findings$/)[1]);
                 currentView.value = 'findings';
+                currentProjectId.value = id;
                 connectGlobalWS();  // Не нужен project WS для findings
                 loadFindings(id);
             } else if (hash.match(/^\/project\/([^/]+)\/blocks$/)) {
@@ -482,7 +500,7 @@ const app = createApp({
                 promptsProjectId.value = id;
                 activePromptTab.value = 0;
                 connectGlobalWS();
-                loadDisciplines().then(() => {
+                loadPromptDisciplines().then(() => {
                     const proj = projects.value.find(p => p.name === id || p.project_id === id);
                     const section = proj?.section || 'EM';
                     promptsDiscipline.value = section;
@@ -512,7 +530,7 @@ const app = createApp({
         const batchRunning = ref(false);
         const batchQueue = ref(null);
         const showBatchModal = ref(false);
-        const batchMode = ref('standard');   // standard | pro
+        const batchMode = ref('audit');   // audit
         const batchScope = ref('audit');     // audit | optimization | both
         const batchModalCount = ref(0);
         const batchAllMode = ref(false);  // true = запуск для ВСЕХ проектов
@@ -539,11 +557,30 @@ const app = createApp({
             return selectedProjects.value.has(projectId);
         }
 
+        function isSectionSelected(sectionCode) {
+            const sectionPids = projects.value
+                .filter(p => (p.section || 'OTHER') === sectionCode)
+                .map(p => p.project_id);
+            return sectionPids.length > 0 && sectionPids.every(id => selectedProjects.value.has(id));
+        }
+
+        function toggleSectionSelection(sectionCode) {
+            const sectionPids = projects.value
+                .filter(p => (p.section || 'OTHER') === sectionCode)
+                .map(p => p.project_id);
+            const s = new Set(selectedProjects.value);
+            const allSelected = sectionPids.every(id => s.has(id));
+            for (const id of sectionPids) {
+                if (allSelected) s.delete(id); else s.add(id);
+            }
+            selectedProjects.value = s;
+            selectAllChecked.value = s.size === projects.value.length && s.size > 0;
+        }
+
         const selectedCount = computed(() => selectedProjects.value.size);
 
         function openBatchModal() {
             batchModalCount.value = selectedProjects.value.size;
-            batchMode.value = 'standard';
             batchScope.value = 'audit';
             batchAllMode.value = false;
             showBatchModal.value = true;
@@ -551,12 +588,12 @@ const app = createApp({
 
         async function confirmBatchAction() {
             showBatchModal.value = false;
-            // Формируем action: standard, pro, optimization, standard+optimization, pro+optimization
-            let action = batchMode.value;  // standard | pro
+            // Формируем action: audit, optimization, audit+optimization
+            let action = 'audit';
             if (batchScope.value === 'optimization') {
                 action = 'optimization';
             } else if (batchScope.value === 'both') {
-                action = batchMode.value + '+optimization';
+                action = 'audit+optimization';
             }
 
             if (batchAllMode.value) {
@@ -594,11 +631,14 @@ const app = createApp({
         function batchActionLabel(action) {
             const labels = {
                 'resume': 'Продолжение прерванных',
-                'standard': 'Стандартный аудит',
-                'pro': 'PRO аудит',
+                'audit': 'Аудит',
                 'optimization': 'Оптимизация',
-                'standard+optimization': 'Стандартный + оптимизация',
-                'pro+optimization': 'PRO + оптимизация',
+                'audit+optimization': 'Аудит + оптимизация',
+                // Legacy
+                'standard': 'Аудит',
+                'pro': 'Аудит',
+                'standard+optimization': 'Аудит + оптимизация',
+                'pro+optimization': 'Аудит + оптимизация',
             };
             return labels[action] || action;
         }
@@ -610,6 +650,28 @@ const app = createApp({
                 batchRunning.value = false;
                 batchQueue.value = null;
             } catch (e) { alert(e.message); }
+        }
+
+        async function addToBatch() {
+            const ids = Array.from(selectedProjects.value);
+            if (!ids.length) return;
+            try {
+                const resp = await fetch('/api/audit/batch/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ project_ids: ids }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `API error: ${resp.status}`);
+                }
+                const data = await resp.json();
+                batchQueue.value = data.queue;
+                selectedProjects.value = new Set();
+                selectAllChecked.value = false;
+            } catch (e) {
+                alert(e.message);
+            }
         }
 
         // ─── Audit Actions ───
@@ -661,21 +723,17 @@ const app = createApp({
             } catch (e) { alert(e.message); auditRunning.value = false; }
         }
 
-        async function startStandardAudit(projectId) {
+        async function startAudit(projectId) {
             try {
                 auditRunning.value = true;
-                await apiPost(`/audit/${projectId}/standard-audit`);
+                await apiPost(`/audit/${projectId}/full-audit`);
                 _afterAuditStart(projectId);
             } catch (e) { alert(e.message); auditRunning.value = false; }
         }
 
-        async function startProAudit(projectId) {
-            try {
-                auditRunning.value = true;
-                await apiPost(`/audit/${projectId}/pro-audit`);
-                _afterAuditStart(projectId);
-            } catch (e) { alert(e.message); auditRunning.value = false; }
-        }
+        // Legacy aliases
+        const startStandardAudit = startAudit;
+        const startProAudit = startAudit;
 
         async function startNormVerify(projectId) {
             try {
@@ -689,6 +747,48 @@ const app = createApp({
             try {
                 auditRunning.value = true;
                 await apiPost(`/audit/${projectId}/resume`);
+                _afterAuditStart(projectId);
+            } catch (e) { alert(e.message); auditRunning.value = false; }
+        }
+
+        // Маппинг pipeline key → API stage name
+        const pipelineToStage = {
+            'crop_blocks': 'prepare',
+            'text_analysis': 'text_analysis',
+            'blocks_analysis': 'block_analysis',
+            'findings': 'findings_merge',
+            'norms_verified': 'norm_verify',
+            'optimization': 'optimization',
+        };
+
+        const stageLabelMap = {
+            'prepare': 'Кроп блоков',
+            'text_analysis': 'Анализ текста',
+            'block_analysis': 'Анализ блоков',
+            'findings_merge': 'Свод замечаний',
+            'norm_verify': 'Верификация норм',
+            'optimization': 'Оптимизация',
+        };
+
+        function canStartFrom(pipelineKey) {
+            if (auditRunning.value || !currentProject.value) return false;
+            if (isProjectRunning(currentProject.value.project_id)) return false;
+            const status = currentProject.value.pipeline?.[pipelineKey];
+            return status === 'done' || status === 'error';
+        }
+
+        async function startFromStage(projectId, pipelineKey) {
+            const stage = pipelineToStage[pipelineKey];
+            if (!stage) return;
+            const label = stageLabelMap[stage] || stage;
+            if (!confirm(`Запустить конвейер с этапа «${label}»?\nВсе последующие этапы будут пересчитаны.`)) return;
+            try {
+                auditRunning.value = true;
+                if (stage === 'optimization') {
+                    await apiPost(`/optimization/${projectId}/run`);
+                } else {
+                    await apiPost(`/audit/${projectId}/start-from?stage=${stage}`);
+                }
                 _afterAuditStart(projectId);
             } catch (e) { alert(e.message); auditRunning.value = false; }
         }
@@ -759,17 +859,16 @@ const app = createApp({
         });
 
         function startAllProjects() {
-            // Открываем ту же модалку выбора режима, но для ВСЕХ проектов
+            // Открываем модалку выбора объёма для ВСЕХ проектов
             batchModalCount.value = projects.value.length;
-            batchMode.value = 'standard';
             batchScope.value = 'audit';
             batchAllMode.value = true;
             showBatchModal.value = true;
         }
 
-        async function generateExcel() {
+        async function generateExcel(reportType = 'all') {
             try {
-                const data = await apiPost('/export/excel');
+                const data = await apiPost(`/export/excel?report_type=${reportType}`);
                 if (data.file) {
                     window.open(`/api/export/download/${data.file}`, '_blank');
                 }
@@ -778,8 +877,192 @@ const app = createApp({
 
         // Model Switcher удалён — модели per-stage настроены в config.py → _stage_models
 
-        // ─── Disciplines ───
+        // ─── Disciplines & Section Groups ───
+        const objectName = ref('');
         const supportedDisciplines = ref([]);
+        const collapsedSections = ref({});
+
+        const projectsBySection = computed(() => {
+            const groups = {};
+            // Сначала создаём пустые группы для всех зарегистрированных дисциплин
+            for (const d of supportedDisciplines.value) {
+                groups[d.code] = [];
+            }
+            // Затем распределяем проекты по группам
+            for (const p of projects.value) {
+                const sec = p.section || 'OTHER';
+                if (!groups[sec]) groups[sec] = [];
+                groups[sec].push(p);
+            }
+            const order = supportedDisciplines.value.map(d => d.code);
+            return Object.entries(groups).sort(([a], [b]) => {
+                const ai = order.indexOf(a), bi = order.indexOf(b);
+                return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+            });
+        });
+
+        function toggleSection(code) {
+            collapsedSections.value[code] = !collapsedSections.value[code];
+        }
+
+        const allSectionsCollapsed = computed(() => {
+            const sections = projectsBySection.value;
+            if (!sections.length) return false;
+            return sections.every(([code]) => collapsedSections.value[code]);
+        });
+
+        function toggleAllSections() {
+            const collapse = !allSectionsCollapsed.value;
+            for (const [code] of projectsBySection.value) {
+                collapsedSections.value[code] = collapse;
+            }
+        }
+
+        // ─── Edit Section ───
+        const showEditSection = ref(false);
+        const editSectionCode = ref('');
+        const editSectionName = ref('');
+        const editSectionColor = ref('#3498db');
+
+        function openEditSection(code) {
+            const d = supportedDisciplines.value.find(x => x.code === code);
+            editSectionCode.value = code;
+            editSectionName.value = d ? d.name : code;
+            editSectionColor.value = d ? d.color : '#3498db';
+            showEditSection.value = true;
+        }
+
+        async function saveEditSection() {
+            const code = editSectionCode.value;
+            const name = editSectionName.value.trim();
+            if (!name) return;
+            try {
+                const resp = await fetch(`/api/projects/disciplines/${encodeURIComponent(code)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, color: editSectionColor.value }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                // Обновить локально
+                const d = supportedDisciplines.value.find(x => x.code === code);
+                if (d) {
+                    d.name = name;
+                    d.short_name = name;
+                    d.color = editSectionColor.value;
+                }
+                showEditSection.value = false;
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
+
+        // ─── Excel по разделу ───
+        const sectionExcelLoading = ref(null);
+
+        async function exportSectionExcel(sectionCode, sectionProjects) {
+            if (!sectionProjects.length) return;
+            sectionExcelLoading.value = sectionCode;
+            try {
+                const resp = await fetch('/api/export/excel/section', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        section: sectionCode,
+                        project_ids: sectionProjects.map(p => p.project_id),
+                    }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                const data = await resp.json();
+                // Скачать файл
+                window.open('/api/export/download/' + encodeURIComponent(data.file), '_blank');
+            } catch (e) {
+                alert('Ошибка генерации Excel: ' + e.message);
+            } finally {
+                sectionExcelLoading.value = null;
+            }
+        }
+
+        // ─── Drag & Drop разделов ───
+        const dragSectionCode = ref(null);
+        const dragOverCode = ref(null);
+
+        function onSectionDragStart(e, code) {
+            dragSectionCode.value = code;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', code);
+        }
+
+        let lastDragSwap = 0;
+        function onSectionDragOver(e, code) {
+            if (dragSectionCode.value && dragSectionCode.value !== code) {
+                dragOverCode.value = code;
+                e.dataTransfer.dropEffect = 'move';
+                // Debounce: не чаще раза в 100ms
+                const now = Date.now();
+                if (now - lastDragSwap < 100) return;
+                lastDragSwap = now;
+                // Переставить на лету
+                const list = [...supportedDisciplines.value];
+                const fromIdx = list.findIndex(d => d.code === dragSectionCode.value);
+                const toIdx = list.findIndex(d => d.code === code);
+                if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+                    const [moved] = list.splice(fromIdx, 1);
+                    list.splice(toIdx, 0, moved);
+                    supportedDisciplines.value = list;
+                }
+            }
+        }
+
+        function onSectionDragEnd() {
+            if (dragSectionCode.value) {
+                saveSectionOrder();
+            }
+            dragSectionCode.value = null;
+            dragOverCode.value = null;
+        }
+
+        async function saveSectionOrder() {
+            const codes = supportedDisciplines.value.map(d => d.code);
+            try {
+                await fetch('/api/projects/disciplines/reorder', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ codes }),
+                });
+            } catch (e) {
+                console.error('Ошибка сохранения порядка:', e);
+            }
+        }
+
+        async function deleteSection() {
+            const code = editSectionCode.value;
+            // Проверяем нет ли проектов в этом разделе
+            const count = projects.value.filter(p => p.section === code).length;
+            if (count > 0) {
+                alert(`Нельзя удалить раздел "${code}" — в нём ${count} проект(ов). Сначала перенесите проекты.`);
+                return;
+            }
+            if (!confirm(`Удалить раздел "${code}"?`)) return;
+            try {
+                const resp = await fetch(`/api/projects/disciplines/${encodeURIComponent(code)}`, {
+                    method: 'DELETE',
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                supportedDisciplines.value = supportedDisciplines.value.filter(x => x.code !== code);
+                showEditSection.value = false;
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
 
         async function loadDisciplines() {
             try {
@@ -788,7 +1071,8 @@ const app = createApp({
             } catch (e) {
                 console.error('Failed to load disciplines:', e);
                 supportedDisciplines.value = [
-                    { code: 'EM', name: 'Электроснабжение', short_name: 'ЭОМ/ЭС', color: '#f39c12' },
+                    { code: 'EM', name: 'Электроснабжение и электрооборудование', short_name: 'ЭОМ/ЭС', color: '#f39c12' },
+                    { code: 'OV', name: 'Отопление, вентиляция и кондиционирование', short_name: 'ОВиК', color: '#3498db' },
                 ];
             }
         }
@@ -832,22 +1116,107 @@ const app = createApp({
 
         // ─── Add Project (scan & register) ───
         const showAddProject = ref(false);
+        const addProjectStep = ref('choose'); // 'choose' | 'section' | 'project'
         const unregisteredFolders = ref([]);
         const addProjectLoading = ref(false);
+        const newSectionName = ref('');
+        const newSectionCode = ref('');
+        const newSectionColor = ref('#3498db');
+        const externalPath = ref('');
+        const projectSource = ref('local'); // 'local' | 'external'
+
+        function openAddModal() {
+            addProjectStep.value = 'choose';
+            showAddProject.value = true;
+        }
+
+        function goToAddSection() {
+            addProjectStep.value = 'section';
+            newSectionName.value = '';
+            newSectionCode.value = '';
+            newSectionColor.value = '#3498db';
+        }
+
+        async function goToAddProject() {
+            addProjectStep.value = 'project';
+            projectSource.value = 'local';
+            externalPath.value = '';
+            await scanFolders();
+        }
+
+        async function addSection() {
+            const code = newSectionCode.value.trim().toUpperCase();
+            const name = newSectionName.value.trim();
+            if (!code || !name) { alert('Укажите код и название раздела'); return; }
+            if (supportedDisciplines.value.find(d => d.code === code)) {
+                alert('Раздел с таким кодом уже существует');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/projects/disciplines', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code, name, color: newSectionColor.value }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `Ошибка: ${resp.status}`);
+                }
+                // Обновить список дисциплин с сервера
+                supportedDisciplines.value.push({
+                    code: code,
+                    name: name,
+                    short_name: name,
+                    color: newSectionColor.value,
+                    has_profile: false,
+                });
+                showAddProject.value = false;
+            } catch (e) {
+                alert('Ошибка: ' + e.message);
+            }
+        }
 
         async function scanFolders() {
             addProjectLoading.value = true;
             try {
                 const data = await api('/projects/scan');
-                // Для каждой папки автоматически определяем дисциплину
                 const folders = data.folders;
                 for (const f of folders) {
                     const detected = await detectDiscipline(f.folder);
                     f._detectedDiscipline = detected;
                     f._selectedDiscipline = detected;
+                    f._isExternal = false;
                 }
                 unregisteredFolders.value = folders;
-                showAddProject.value = true;
+            } catch (e) {
+                alert('Ошибка сканирования: ' + e.message);
+            }
+            addProjectLoading.value = false;
+        }
+
+        async function scanExternalFolder() {
+            const path = externalPath.value.trim();
+            if (!path) { alert('Укажите путь к папке'); return; }
+            addProjectLoading.value = true;
+            try {
+                const resp = await fetch('/api/projects/scan-external', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path }),
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || resp.statusText);
+                }
+                const data = await resp.json();
+                const folders = data.folders;
+                for (const f of folders) {
+                    const detected = await detectDiscipline(f.folder);
+                    f._detectedDiscipline = detected;
+                    f._selectedDiscipline = detected;
+                    f._isExternal = true;
+                }
+                unregisteredFolders.value = folders;
             } catch (e) {
                 alert('Ошибка сканирования: ' + e.message);
             }
@@ -860,26 +1229,41 @@ const app = createApp({
 
             addProjectLoading.value = true;
             try {
-                const body = {
-                    folder: folder,
-                    pdf_file: folderInfo.pdf_files[0],
-                    md_file: folderInfo.md_files.length > 0 ? folderInfo.md_files[0] : null,
-                    name: folder,
-                    section: folderInfo._selectedDiscipline || 'EM',
-                    description: '',
-                };
-                const resp = await fetch('/api/projects/register', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                });
+                let resp;
+                if (folderInfo._isExternal && folderInfo.full_path) {
+                    // Внешний проект — копируем в projects/
+                    resp = await fetch('/api/projects/register-external', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source_path: folderInfo.full_path,
+                            pdf_file: folderInfo.pdf_files[0],
+                            md_file: folderInfo.md_files.length > 0 ? folderInfo.md_files[0] : null,
+                            name: folder,
+                            section: folderInfo._selectedDiscipline || 'EM',
+                            description: '',
+                        }),
+                    });
+                } else {
+                    // Локальный проект из projects/
+                    resp = await fetch('/api/projects/register', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            folder: folder,
+                            pdf_file: folderInfo.pdf_files[0],
+                            md_file: folderInfo.md_files.length > 0 ? folderInfo.md_files[0] : null,
+                            name: folder,
+                            section: folderInfo._selectedDiscipline || 'EM',
+                            description: '',
+                        }),
+                    });
+                }
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
                     throw new Error(err.detail || `Ошибка: ${resp.status}`);
                 }
-                // Убрать из списка незарегистрированных
                 unregisteredFolders.value = unregisteredFolders.value.filter(f => f.folder !== folder);
-                // Обновить список проектов
                 await refreshProjects();
                 if (unregisteredFolders.value.length === 0) {
                     showAddProject.value = false;
@@ -900,6 +1284,7 @@ const app = createApp({
             try {
                 const data = await api('/projects');
                 projects.value = data.projects;
+                if (data.object_name) objectName.value = data.object_name;
                 fetchAllProjectUsage();  // загрузить usage для дашборда
             } catch (e) {
                 console.error('Failed to load projects:', e);
@@ -910,7 +1295,7 @@ const app = createApp({
         async function loadProject(id) {
             currentProjectId.value = id;
             try {
-                currentProject.value = await api(`/projects/${id}`);
+                currentProject.value = await api(`/projects/${encodeURIComponent(id)}`);
                 loadResumeInfo(id);
                 fetchProjectUsage(id);  // загрузить детальный usage
             } catch (e) {
@@ -919,14 +1304,89 @@ const app = createApp({
             }
         }
 
+        // ─── Finding → Block map ───
+        const findingBlockMap = ref({});   // {finding_id: [block_ids]}
+        const findingBlockInfo = ref({});  // {block_id: {block_id, page, ocr_label}}
+        const expandedFindingId = ref(null); // какой finding сейчас раскрыт
+
+        async function loadFindingBlockMap(id) {
+            try {
+                const data = await api(`/findings/${id}/block-map`);
+                findingBlockMap.value = data.block_map || {};
+                findingBlockInfo.value = data.block_info || {};
+            } catch (e) {
+                findingBlockMap.value = {};
+                findingBlockInfo.value = {};
+            }
+        }
+
+        function toggleFindingBlocks(findingId) {
+            expandedFindingId.value = expandedFindingId.value === findingId ? null : findingId;
+        }
+
+        function getFindingBlocks(findingId) {
+            const blockIds = findingBlockMap.value[findingId] || [];
+            return blockIds.map(bid => findingBlockInfo.value[bid] || { block_id: bid, page: null, ocr_label: '' });
+        }
+
+        function navigateToBlock(blockId, page) {
+            const pid = currentProjectId.value;
+            // Запомнить откуда пришли и какой элемент был раскрыт
+            blockBackRoute.value = {
+                hash: window.location.hash || `#/project/${encodeURIComponent(pid)}/findings`,
+                expandedFinding: expandedFindingId.value,
+                expandedOpt: expandedOptId.value,
+            };
+            // Переходим в blocks, выставляем нужную страницу и блок
+            navigate(`/project/${encodeURIComponent(pid)}/blocks`);
+            // После загрузки — выбрать страницу и блок
+            nextTick(async () => {
+                // Ждём загрузки блоков
+                await new Promise(r => setTimeout(r, 300));
+                if (page) selectedBlockPage.value = page;
+                await nextTick();
+                // Найти блок и открыть
+                for (const pg of blockPages.value) {
+                    const found = (pg.blocks || []).find(b => b.block_id === blockId);
+                    if (found) {
+                        selectedBlockPage.value = pg.page_num;
+                        await nextTick();
+                        openBlock(found);
+                        // Скролл к блоку
+                        const el = document.querySelector(`[data-block-id="${blockId}"]`);
+                        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        break;
+                    }
+                }
+            });
+        }
+
+        function goBackFromBlock() {
+            if (blockBackRoute.value) {
+                const back = blockBackRoute.value;
+                blockBackRoute.value = null;
+                window.location.hash = back.hash;
+                // Восстановить раскрытый элемент после навигации
+                nextTick(() => {
+                    setTimeout(() => {
+                        if (back.expandedFinding) expandedFindingId.value = back.expandedFinding;
+                        if (back.expandedOpt) expandedOptId.value = back.expandedOpt;
+                    }, 200);
+                });
+            }
+        }
+
         async function loadFindings(id) {
             findingsData.value = null;
+            expandedFindingId.value = null;
             try {
                 const params = new URLSearchParams();
                 if (filterSeverity.value) params.set('severity', filterSeverity.value);
                 if (filterSearch.value) params.set('search', filterSearch.value);
                 const qs = params.toString();
                 findingsData.value = await api(`/findings/${id}${qs ? '?' + qs : ''}`);
+                // Загрузить маппинг блоков параллельно
+                loadFindingBlockMap(id);
             } catch (e) {
                 console.error('Failed to load findings:', e);
             }
@@ -954,12 +1414,17 @@ const app = createApp({
         async function loadBlocks(id) {
             blocksProjectId.value = id;
             selectedBlock.value = null;
+            blockCropErrors.value = 0;
+            blockTotalExpected.value = 0;
             try {
                 const [blocksData] = await Promise.all([
                     api(`/tiles/${id}/blocks`),
                     loadBlockAnalysis(id),
+                    loadBlockToFindingsMap(id),
                 ]);
                 blockPages.value = blocksData.pages || [];
+                blockCropErrors.value = blocksData.errors || 0;
+                blockTotalExpected.value = blocksData.total_expected || 0;
                 if (blockPages.value.length > 0 && !selectedBlockPage.value) {
                     selectedBlockPage.value = blockPages.value[0].page_num;
                 }
@@ -1018,6 +1483,44 @@ const app = createApp({
             return blockAnalysis.value[selectedBlock.value.block_id] || null;
         });
 
+        // ─── Block → Finding (обратная связь) ───
+        // Маппинг block_id → [F-замечания] для показа в split-view блока
+        const blockToFindings = ref({});  // {block_id: [{id, severity, problem, norm}]}
+
+        async function loadBlockToFindingsMap(id) {
+            try {
+                // Загрузить block-map и findings параллельно
+                const [mapData, findingsResp] = await Promise.all([
+                    api(`/findings/${id}/block-map`),
+                    api(`/findings/${id}`),
+                ]);
+                const bmap = mapData.block_map || {};
+                const findings = findingsResp.findings || [];
+                // Построить обратный маппинг
+                const reverse = {};
+                for (const f of findings) {
+                    const blocks = bmap[f.id] || [];
+                    for (const bid of blocks) {
+                        if (!reverse[bid]) reverse[bid] = [];
+                        reverse[bid].push({
+                            id: f.id,
+                            severity: f.severity,
+                            problem: f.problem || f.finding || f.description || '',
+                            norm: f.norm || '',
+                            solution: f.solution || f.recommendation || '',
+                        });
+                    }
+                }
+                blockToFindings.value = reverse;
+            } catch (e) {
+                blockToFindings.value = {};
+            }
+        }
+
+        function getBlockFindings(blockId) {
+            return blockToFindings.value[blockId] || [];
+        }
+
         // ─── Optimization ───
         // ─── Document Viewer (MD) ────────────────────────────
         function renderMarkdown(text) {
@@ -1073,16 +1576,43 @@ const app = createApp({
             if (idx < documentPages.value.length - 1) loadDocumentPage(documentProjectId.value, documentPages.value[idx + 1].page_num);
         }
 
+        // ─── Optimization → Block map ───
+        const optBlockMap = ref({});       // {opt_id: [block_ids]}
+        const optBlockInfo = ref({});      // {block_id: {block_id, page, ocr_label}}
+        const expandedOptId = ref(null);
+
+        async function loadOptBlockMap(id) {
+            try {
+                const data = await api(`/optimization/${id}/block-map`);
+                optBlockMap.value = data.block_map || {};
+                optBlockInfo.value = data.block_info || {};
+            } catch (e) {
+                optBlockMap.value = {};
+                optBlockInfo.value = {};
+            }
+        }
+
+        function toggleOptBlocks(optId) {
+            expandedOptId.value = expandedOptId.value === optId ? null : optId;
+        }
+
+        function getOptBlocks(optId) {
+            const blockIds = optBlockMap.value[optId] || [];
+            return blockIds.map(bid => optBlockInfo.value[bid] || { block_id: bid, page: null, ocr_label: '' });
+        }
+
         async function loadOptimization(id) {
             currentProjectId.value = id;
             optimizationLoading.value = true;
             optimizationData.value = null;
+            expandedOptId.value = null;
             try {
                 currentProject.value = await api(`/projects/${id}`);
                 const resp = await api(`/optimization/${id}`);
                 if (resp.has_data) {
                     optimizationData.value = resp.data;
                 }
+                loadOptBlockMap(id);
             } catch (e) {
                 console.error('Failed to load optimization:', e);
             }
@@ -1098,11 +1628,12 @@ const app = createApp({
             }
         }
 
+        const _optTypeOrder = { 'cheaper_analog': 0, 'faster_install': 1, 'simpler_design': 2, 'lifecycle': 3 };
         const filteredOptimization = computed(() => {
             if (!optimizationData.value) return [];
             const items = optimizationData.value.items || [];
-            if (!optimizationFilter.value) return items;
-            return items.filter(i => i.type === optimizationFilter.value);
+            const filtered = optimizationFilter.value ? items.filter(i => i.type === optimizationFilter.value) : items;
+            return [...filtered].sort((a, b) => (_optTypeOrder[a.type] ?? 9) - (_optTypeOrder[b.type] ?? 9));
         });
 
         const optimizationTypeLabels = {
@@ -1248,7 +1779,7 @@ const app = createApp({
             if (s.includes('КРИТИЧ')) return 'critical';
             if (s.includes('ЭКОНОМ')) return 'economic';
             if (s.includes('ЭКСПЛУАТ')) return 'operational';
-            if (s.includes('РЕКОМЕНД')) return 'recommendation';
+            if (s.includes('РЕКОМЕНД')) return 'recommended';
             if (s.includes('ПРОВЕР')) return 'check';
             return 'check';
         }
@@ -1284,14 +1815,14 @@ const app = createApp({
         }
 
         // ─── Prompts ───
-        async function loadDisciplines() {
+        async function loadPromptDisciplines() {
             try {
                 const resp = await fetch('/api/audit/disciplines');
                 if (!resp.ok) return;
                 const data = await resp.json();
                 disciplines.value = data.disciplines || [];
             } catch (e) {
-                console.error('loadDisciplines error:', e);
+                console.error('loadPromptDisciplines error:', e);
             }
         }
 
@@ -1539,7 +2070,7 @@ const app = createApp({
                 pushToProjectLog(pid, {
                     time: time,
                     level: 'success',
-                    message: `Аудит завершён. Замечаний: ${msg.data.total_findings}. Время: ${msg.data.duration_minutes} мин.`,
+                    message: `Аудит завершён. Замечаний: ${msg.data.total_findings}. Время: ${msg.data.duration_minutes} мин.` + (msg.data.pause_minutes > 1 ? ` (паузы: ${msg.data.pause_minutes} мин)` : ''),
                 });
                 auditRunning.value = false;
                 // Обновляем данные при завершении
@@ -1619,18 +2150,21 @@ const app = createApp({
 
         return {
             // State
-            currentView, currentProject, projects, loading,
+            currentView, currentProject, currentProjectId, projects, loading,
             findingsData, filterSeverity, filterSearch, severityOptions,
+            findingBlockMap, findingBlockInfo, expandedFindingId,
+            toggleFindingBlocks, getFindingBlocks, navigateToBlock, blockBackRoute, goBackFromBlock,
             tilesProjectId, tilePages, selectedPage, selectedTile,
             tileAnalysis, tileAnalysisLoading, selectedTileAnalysis,
             tileHasAnalysis, tileFindingsCount, tileMaxSeverity,
             pageSummaries, pageAnalysis, pageAnalysisLoading, showPageAnalysis,
             sheetTypeIcon, getPageSummary,
             // Blocks (OCR)
-            blocksProjectId, blockPages, selectedBlockPage, selectedBlock,
+            blocksProjectId, blockPages, blockCropErrors, blockTotalExpected,
+            selectedBlockPage, selectedBlock,
             blockAnalysis, selectedBlockAnalysis, currentPageBlocks,
             blockHasAnalysis, blockFindingsCount, blockMaxSeverity,
-            openBlock, loadBlocks,
+            openBlock, loadBlocks, blockToFindings, getBlockFindings,
             logProjectId, logEntries, logAutoScroll, logContainer, logLoading,
             wsConnected,
             // Live status
@@ -1641,7 +2175,7 @@ const app = createApp({
             // Heartbeat
             heartbeatData, lastHeartbeatTime,
             secondsSinceHeartbeat, isHeartbeatStale, getHeartbeatInfo,
-            formatETA, heartbeatStatusText,
+            formatETA, heartbeatStatusText, isClaudeStage, getRunningStage,
             // Methods
             navigate, refreshProjects, stepClass, sevClass, sevIcon,
             tileImageUrl, openTile, debounceSearch, clearLog,
@@ -1649,27 +2183,39 @@ const app = createApp({
             promptsProjectId, templates, promptsLoading,
             activePromptTab, promptsDiscipline,
             disciplines, showDisciplineDropdown, currentDiscipline,
-            loadTemplates, loadDisciplines,
+            loadTemplates, loadPromptDisciplines,
             switchDiscipline, saveTemplate, highlightPlaceholders, syncScroll,
             // Audit actions
             auditRunning, allRunning,
             startPrepare, startTileAudit, startMainAudit,
-            startSmartAudit, startStandardAudit, startProAudit,
+            startSmartAudit, startAudit, startStandardAudit, startProAudit,
             startNormVerify, startOptimization, cancelAudit, generateExcel,
             startAllProjects, resumePipeline, resumeInfo,
+            startFromStage, canStartFrom, pipelineToStage,
             retryStage, skipStage, cleanProject,
             // Batch selection
             selectedProjects, selectAllChecked, selectedCount,
             batchRunning, batchQueue,
             showBatchModal, batchMode, batchScope, batchModalCount, batchAllMode,
             toggleProjectSelection, toggleSelectAll, isProjectSelected,
-            openBatchModal, confirmBatchAction, startBatchAction, cancelBatch,
+            isSectionSelected, toggleSectionSelection,
+            sectionExcelLoading, exportSectionExcel,
+            openBatchModal, confirmBatchAction, startBatchAction, cancelBatch, addToBatch,
             batchActionLabel,
             // Add project
-            showAddProject, unregisteredFolders, addProjectLoading,
-            scanFolders, registerProject, closeAddProject,
+            showAddProject, addProjectStep, unregisteredFolders, addProjectLoading,
+            openAddModal, goToAddSection, goToAddProject, addSection,
+            newSectionName, newSectionCode, newSectionColor,
+            scanFolders, scanExternalFolder, registerProject, closeAddProject,
+            externalPath, projectSource,
             // Disciplines
             supportedDisciplines, getDisciplineColor, disciplineLabel, disciplineBadgeStyle,
+            objectName, projectsBySection, collapsedSections, toggleSection,
+            allSectionsCollapsed, toggleAllSections,
+            showEditSection, editSectionCode, editSectionName, editSectionColor,
+            openEditSection, saveEditSection, deleteSection,
+            dragSectionCode, dragOverCode,
+            onSectionDragStart, onSectionDragOver, onSectionDragEnd,
             // Model switcher
             // Usage (global dashboard)
             globalUsage, showUsageDetails, sonnetPercent,
@@ -1679,6 +2225,8 @@ const app = createApp({
             projectUsage, currentProjectUsage, stageTokens, stageDurationForProject, formatDuration,
             // Optimization
             optimizationData, optimizationLoading, optimizationFilter,
+            optBlockMap, optBlockInfo, expandedOptId,
+            toggleOptBlocks, getOptBlocks,
             filteredOptimization, optimizationTypeLabels, optimizationTypeColors,
             optTypeLabel, optTypeColor, loadOptimization,
             // Document viewer

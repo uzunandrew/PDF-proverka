@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from webapp.config import PROJECTS_DIR
+from webapp.services.project_service import resolve_project_dir
 from webapp.models.audit import AuditJob
 from webapp.models.websocket import WSMessage
 from webapp.ws.manager import ws_manager
@@ -22,7 +22,7 @@ def update_pipeline_log(
     detail: dict | None = None,
 ):
     """Записать статус этапа в pipeline_log.json и отправить WS-обновление."""
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     output_dir.mkdir(exist_ok=True)
 
     log_path = output_dir / "pipeline_log.json"
@@ -77,7 +77,7 @@ def update_pipeline_log(
 def persist_log(project_id: str, message: str, level: str, stage: str):
     """Сохранить запись лога в audit_log.jsonl проекта."""
     try:
-        output_dir = PROJECTS_DIR / project_id / "_output"
+        output_dir = resolve_project_dir(project_id) / "_output"
         output_dir.mkdir(parents=True, exist_ok=True)
         log_path = output_dir / "audit_log.jsonl"
         entry = {

@@ -6,7 +6,7 @@
 import json
 from pathlib import Path
 
-from webapp.config import PROJECTS_DIR
+from webapp.services.project_service import resolve_project_dir
 
 
 def detect_resume_stage(project_id: str) -> dict:
@@ -16,7 +16,7 @@ def detect_resume_stage(project_id: str) -> dict:
 
     Поддерживает оба пайплайна: блоковый (OCR) и тайловый (legacy).
     """
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     tiles_dir = output_dir / "tiles"
 
     # Проверяем наличие ключевых файлов

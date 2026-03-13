@@ -16,6 +16,47 @@ if platform.system() == "Windows":
     _SUBPROCESS_FLAGS["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
 
 
+# ─── Реестр активных процессов по project_id ───
+# { project_id: set(asyncio.subprocess.Process) }
+_active_processes: dict[str, set] = {}
+
+
+def register_process(project_id: str, proc) -> None:
+    """Зарегистрировать процесс для отслеживания."""
+    if project_id not in _active_processes:
+        _active_processes[project_id] = set()
+    _active_processes[project_id].add(proc)
+
+
+def unregister_process(project_id: str, proc) -> None:
+    """Убрать процесс из отслеживания."""
+    procs = _active_processes.get(project_id)
+    if procs:
+        procs.discard(proc)
+        if not procs:
+            del _active_processes[project_id]
+
+
+async def kill_all_processes(project_id: str) -> int:
+    """Убить все активные процессы проекта. Возвращает количество убитых."""
+    procs = _active_processes.pop(project_id, set())
+    killed = 0
+    for proc in procs:
+        try:
+            if proc.returncode is None:  # ещё жив
+                proc.kill()
+                killed += 1
+        except (ProcessLookupError, OSError):
+            pass
+    # Дождаться завершения всех убитых процессов
+    for proc in procs:
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except (asyncio.TimeoutError, ProcessLookupError, OSError):
+            pass
+    return killed
+
+
 async def run_script(
     script: str,
     args: list[str] = None,
@@ -23,6 +64,7 @@ async def run_script(
     env_overrides: Optional[dict] = None,
     cwd: Optional[str] = None,
     timeout: Optional[int] = None,
+    project_id: Optional[str] = None,
 ) -> tuple[int, str, str]:
     """
     Запускает Python-скрипт как подпроцесс.
@@ -59,6 +101,8 @@ async def run_script(
         env=env,
         **_SUBPROCESS_FLAGS,
     )
+    if project_id:
+        register_process(project_id, proc)
 
     stdout_lines = []
     stderr_lines = []
@@ -101,6 +145,9 @@ async def run_script(
         proc.kill()
         await proc.wait()
         return -2, "\n".join(stdout_lines), "Отменено"
+    finally:
+        if project_id:
+            unregister_process(project_id, proc)
 
     return proc.returncode, "\n".join(stdout_lines), "\n".join(stderr_lines)
 
@@ -112,6 +159,7 @@ async def run_command(
     cwd: Optional[str] = None,
     timeout: Optional[int] = None,
     input_text: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> tuple[int, str, str]:
     """
     Запускает произвольную команду (не только Python).
@@ -150,6 +198,8 @@ async def run_command(
         env=env,
         **_SUBPROCESS_FLAGS,
     )
+    if project_id:
+        register_process(project_id, proc)
 
     stdout_lines = []
     stderr_lines = []
@@ -187,6 +237,9 @@ async def run_command(
             proc.kill()
             await proc.wait()
             return -2, "", "Отменено"
+        finally:
+            if project_id:
+                unregister_process(project_id, proc)
     else:
         # Без stdin — стриминг stdout
         async def read_stream(stream, lines, is_stderr=False):
@@ -226,5 +279,8 @@ async def run_command(
             proc.kill()
             await proc.wait()
             return -2, "\n".join(stdout_lines), "Отменено"
+        finally:
+            if project_id:
+                unregister_process(project_id, proc)
 
         return proc.returncode, "\n".join(stdout_lines), "\n".join(stderr_lines)

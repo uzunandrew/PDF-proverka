@@ -18,6 +18,25 @@ Usage:
 import os, sys, json, argparse
 from datetime import datetime
 
+
+def _iter_project_dirs(root):
+    """Рекурсивно найти все папки проектов (включая подпапки-группы)."""
+    results = []
+    for name in sorted(os.listdir(root)):
+        entry = os.path.join(root, name)
+        if not os.path.isdir(entry) or name.startswith("_"):
+            continue
+        info = os.path.join(entry, "project_info.json")
+        has_pdf = any(f.endswith(".pdf") for f in os.listdir(entry))
+        if os.path.exists(info) or has_pdf:
+            results.append((name, entry))
+        else:
+            for sub in sorted(os.listdir(entry)):
+                sub_path = os.path.join(entry, sub)
+                if os.path.isdir(sub_path) and not sub.startswith("_"):
+                    results.append((sub, sub_path))
+    return results
+
 # Фикс кодировки Windows (cp1251 -> utf-8 в консоли)
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     try:
@@ -213,10 +232,7 @@ def list_all_projects():
         return
 
     print(f"\nAll projects in: {proj_root}\n")
-    for name in sorted(os.listdir(proj_root)):
-        proj_dir = os.path.join(proj_root, name)
-        if not os.path.isdir(proj_dir):
-            continue
+    for name, proj_dir in _iter_project_dirs(proj_root):
         out_dir = os.path.join(proj_dir, "_output")
         status, audits = pipeline_status(out_dir)
         done = sum(1 for s in status.values() if s == "DONE")

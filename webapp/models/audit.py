@@ -45,6 +45,8 @@ class AuditJob(BaseModel):
     last_heartbeat: Optional[str] = None       # ISO timestamp последнего heartbeat
     batch_started_at: Optional[str] = None      # когда начался текущий пакет
     batch_durations: list[float] = []            # длительности завершённых пакетов (сек)
+    # Rate limit паузы — чистое время = wall-clock минус pause_total_sec
+    pause_total_sec: float = 0.0                 # суммарное время пауз (сек)
     # Потребление токенов
     tokens_input: int = 0
     tokens_output: int = 0
@@ -76,9 +78,12 @@ class BatchAction(str, Enum):
     """Тип группового действия."""
     FULL = "full"
     RESUME = "resume"
+    AUDIT = "audit"
+    OPTIMIZATION = "optimization"
+    AUDIT_OPTIMIZATION = "audit+optimization"
+    # Legacy aliases
     STANDARD = "standard"
     PRO = "pro"
-    OPTIMIZATION = "optimization"
     STANDARD_OPTIMIZATION = "standard+optimization"
     PRO_OPTIMIZATION = "pro+optimization"
 

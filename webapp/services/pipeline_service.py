@@ -5,6 +5,7 @@ Pipeline Manager — оркестрация конвейера аудита.
 import asyncio
 import json
 import os
+import random
 from uuid import uuid4
 from datetime import datetime
 from pathlib import Path
@@ -12,24 +13,32 @@ from typing import Optional
 
 from webapp.config import (
     BASE_DIR, PROJECTS_DIR,
-    PROCESS_PROJECT_SCRIPT, GENERATE_BATCHES_SCRIPT,
-    MERGE_RESULTS_SCRIPT, GENERATE_EXCEL_SCRIPT,
-    VERIFY_NORMS_SCRIPT, DEFAULT_TILE_QUALITY,
+    PROCESS_PROJECT_SCRIPT, GENERATE_EXCEL_SCRIPT,
+    BLOCKS_SCRIPT, NORMS_SCRIPT, DEFAULT_TILE_QUALITY,
     MAX_PARALLEL_BATCHES,
     RATE_LIMIT_THRESHOLD_PCT, RATE_LIMIT_CHECK_INTERVAL,
     RATE_LIMIT_MAX_WAIT, RATE_LIMIT_MAX_RETRIES,
-    CROP_BLOCKS_SCRIPT, GENERATE_BLOCK_BATCHES_SCRIPT,
-    MERGE_BLOCK_RESULTS_SCRIPT,
 )
 from webapp.models.audit import AuditJob, AuditStage, JobStatus, BatchQueueStatus, BatchQueueItem, BatchAction
 from webapp.models.websocket import WSMessage
 from webapp.config import get_claude_model, get_model_for_stage
 from webapp.models.usage import UsageRecord
-from webapp.services.process_runner import run_script
+from webapp.services.process_runner import run_script, kill_all_processes
 from webapp.services import claude_runner
 from webapp.services.usage_service import usage_tracker, global_scanner
 from webapp.services.resume_detector import detect_resume_stage as _detect_resume_stage
 from webapp.services import audit_logger
+from webapp.services.project_service import resolve_project_dir
+
+
+def _project_path(pid: str) -> str:
+    """Относительный путь к папке проекта (с учётом подпапок-групп)."""
+    resolved = resolve_project_dir(pid)
+    try:
+        return str(resolved.relative_to(BASE_DIR))
+    except ValueError:
+        return str(resolved)
+from webapp.services.project_service import resolve_project_dir
 from webapp.ws.manager import ws_manager
 
 
@@ -58,6 +67,7 @@ class PipelineManager:
             True если лимит сбросился и можно продолжать,
             False если job отменён или превышен макс. таймаут ожидания.
         """
+        pause_start = datetime.now()
         total_waited = 0
 
         # Попытка извлечь точное время сброса из вывода CLI
@@ -96,59 +106,64 @@ class PipelineManager:
             ),
         )
 
-        while total_waited < RATE_LIMIT_MAX_WAIT:
-            if job.status == JobStatus.CANCELLED:
-                return False
+        try:
+            while total_waited < RATE_LIMIT_MAX_WAIT:
+                if job.status == JobStatus.CANCELLED:
+                    return False
 
-            # Спим порциями, чтобы можно было отменить
-            sleep_chunk = min(RATE_LIMIT_CHECK_INTERVAL, RATE_LIMIT_MAX_WAIT - total_waited)
-            await asyncio.sleep(sleep_chunk)
-            total_waited += sleep_chunk
+                # Спим порциями, чтобы можно было отменить
+                sleep_chunk = min(RATE_LIMIT_CHECK_INTERVAL, RATE_LIMIT_MAX_WAIT - total_waited)
+                await asyncio.sleep(sleep_chunk)
+                total_waited += sleep_chunk
 
-            # Если есть точное время из CLI — просто ждём до него
-            if parsed_wait and total_waited >= parsed_wait:
-                await self._log(
-                    job,
-                    f"Время сброса rate limit достигнуто (ждали {total_waited // 60} мин). Продолжаем.",
-                    "info",
-                )
-                return True
-
-            # Без точного времени — проверяем scanner
-            if not parsed_wait:
-                global_scanner.invalidate_cache()
-                check = global_scanner.check_rate_limit(RATE_LIMIT_THRESHOLD_PCT)
-
-                if check["can_proceed"]:
-                    mins = total_waited // 60
+                # Если есть точное время из CLI — просто ждём до него
+                if parsed_wait and total_waited >= parsed_wait:
                     await self._log(
                         job,
-                        f"Rate limit сброшен после {mins} мин ожидания. Продолжаем.",
+                        f"Время сброса rate limit достигнуто (ждали {total_waited // 60} мин). Продолжаем.",
                         "info",
                     )
                     return True
 
-            # Каждые 5 минут логируем статус ожидания
-            if total_waited % 300 == 0:
-                remaining = (parsed_wait - total_waited) if parsed_wait else None
-                if remaining and remaining > 0:
-                    r_min = remaining // 60
-                    await self._log(
-                        job,
-                        f"Ожидание rate limit: осталось ~{r_min} мин "
-                        f"(ждём {total_waited // 60} мин)",
-                        "warn",
-                    )
-                else:
-                    await self._log(
-                        job,
-                        f"Ожидание rate limit "
-                        f"(ждём {total_waited // 60} мин)",
-                        "warn",
-                    )
+                # Без точного времени — проверяем scanner
+                if not parsed_wait:
+                    global_scanner.invalidate_cache()
+                    check = global_scanner.check_rate_limit(RATE_LIMIT_THRESHOLD_PCT)
 
-        await self._log(job, f"Превышено макс. время ожидания rate limit ({RATE_LIMIT_MAX_WAIT // 3600} ч)", "error")
-        return False
+                    if check["can_proceed"]:
+                        mins = total_waited // 60
+                        await self._log(
+                            job,
+                            f"Rate limit сброшен после {mins} мин ожидания. Продолжаем.",
+                            "info",
+                        )
+                        return True
+
+                # Каждые 5 минут логируем статус ожидания
+                if total_waited % 300 == 0:
+                    remaining = (parsed_wait - total_waited) if parsed_wait else None
+                    if remaining and remaining > 0:
+                        r_min = remaining // 60
+                        await self._log(
+                            job,
+                            f"Ожидание rate limit: осталось ~{r_min} мин "
+                            f"(ждём {total_waited // 60} мин)",
+                            "warn",
+                        )
+                    else:
+                        await self._log(
+                            job,
+                            f"Ожидание rate limit "
+                            f"(ждём {total_waited // 60} мин)",
+                            "warn",
+                        )
+
+            await self._log(job, f"Превышено макс. время ожидания rate limit ({RATE_LIMIT_MAX_WAIT // 3600} ч)", "error")
+            return False
+        finally:
+            # Накапливаем реальное время паузы (для вычисления чистого времени)
+            paused_sec = (datetime.now() - pause_start).total_seconds()
+            job.pause_total_sec += paused_sec
 
     async def _check_before_launch(self, job: AuditJob) -> bool:
         """
@@ -162,7 +177,7 @@ class PipelineManager:
             return True
         return await self._wait_for_rate_limit(job, check.get("reason", ""))
 
-    def _record_cli_usage(self, job: AuditJob, cli_result, stage: str):
+    def _record_cli_usage(self, job: AuditJob, cli_result, stage: str, is_retry: bool = False):
         """Записать использование токенов после Claude CLI вызова."""
         if not cli_result:
             return
@@ -174,7 +189,9 @@ class PipelineManager:
             model=get_model_for_stage(stage),
             cost_usd=cli_result.cost_usd,
             duration_ms=cli_result.duration_ms,
+            duration_api_ms=cli_result.duration_api_ms,
             num_turns=cli_result.num_turns,
+            is_retry=is_retry,
         )
         usage_tracker.record_usage(record)
         job.cost_usd += cli_result.cost_usd
@@ -239,13 +256,10 @@ class PipelineManager:
         1. UI показывал корректный статус (не вечный спиннер)
         2. Resume мог подхватить с прерванного этапа
         """
-        if not PROJECTS_DIR.exists():
-            return
+        from webapp.services.project_service import iter_project_dirs
 
         recovered = 0
-        for project_dir in PROJECTS_DIR.iterdir():
-            if not project_dir.is_dir() or project_dir.name.startswith("_"):
-                continue
+        for _pid, project_dir in iter_project_dirs():
             log_path = project_dir / "_output" / "pipeline_log.json"
             if not log_path.exists():
                 continue
@@ -272,18 +286,22 @@ class PipelineManager:
             print(f"[Recovery] Восстановлено {recovered} проектов с зависшими этапами")
 
     async def cancel(self, project_id: str) -> bool:
-        """Отменить запущенный аудит."""
+        """Отменить запущенный аудит и убить все дочерние процессы."""
         job = self.active_jobs.get(project_id)
         if not job:
             return False
         job.status = JobStatus.CANCELLED
+        # Убить все дочерние Claude CLI / скрипты проекта
+        killed = await kill_all_processes(project_id)
+        if killed:
+            print(f"[{project_id}] Убито {killed} дочерних процессов")
         task = self._tasks.get(project_id)
         if task:
             task.cancel()
         self._cleanup(project_id)
         await ws_manager.broadcast_to_project(
             project_id,
-            WSMessage.log(project_id, "Аудит отменён пользователем", "warn"),
+            WSMessage.log(project_id, f"Аудит отменён пользователем (убито {killed} процессов)", "warn"),
         )
         return True
 
@@ -291,6 +309,10 @@ class PipelineManager:
         self._stop_heartbeat(project_id)
         self.active_jobs.pop(project_id, None)
         self._tasks.pop(project_id, None)
+
+    async def _run_script(self, project_id: str, *args, **kwargs):
+        """Обёртка run_script с автоматическим project_id для трекинга процессов."""
+        return await run_script(*args, project_id=project_id, **kwargs)
 
     def _reset_job_progress(self, job: AuditJob):
         """Сбросить прогресс и ETA-данные при переходе между этапами пайплайна."""
@@ -301,7 +323,7 @@ class PipelineManager:
 
     def _clean_stage_files(self, project_id: str, files: list[str]):
         """Удалить устаревшие JSON-файлы этапов перед перезапуском."""
-        output_dir = PROJECTS_DIR / project_id / "_output"
+        output_dir = resolve_project_dir(project_id) / "_output"
         for filename in files:
             if "*" in filename:
                 # glob-шаблон (например tile_batch_*.json)
@@ -353,11 +375,12 @@ class PipelineManager:
                 now = datetime.now()
                 job.last_heartbeat = now.isoformat()
 
-                # Вычислить elapsed
+                # Вычислить elapsed (чистое время без пауз на rate limit)
                 ref_time = job.batch_started_at or job.started_at
                 if ref_time:
                     started = datetime.fromisoformat(ref_time)
-                    elapsed_sec = (now - started).total_seconds()
+                    elapsed_sec = (now - started).total_seconds() - job.pause_total_sec
+                    elapsed_sec = max(0, elapsed_sec)
                 else:
                     elapsed_sec = 0
 
@@ -405,6 +428,49 @@ class PipelineManager:
         """Делегирует в resume_detector.detect_resume_stage()."""
         return _detect_resume_stage(project_id)
 
+    async def start_from_stage(self, project_id: str, stage: str) -> AuditJob:
+        """Запустить конвейер с указанного этапа (ручной перезапуск цепочки)."""
+        if project_id in self.active_jobs:
+            raise RuntimeError(f"Аудит уже запущен для {project_id}")
+
+        # Убить возможные зомби-процессы от предыдущего запуска
+        killed = await kill_all_processes(project_id)
+        if killed:
+            print(f"[{project_id}] Убито {killed} зомби-процессов от предыдущего запуска")
+
+        valid_stages = ["prepare", "text_analysis", "block_analysis", "findings_merge", "norm_verify", "excel"]
+        if stage not in valid_stages:
+            raise RuntimeError(f"Неизвестный этап: {stage}")
+
+        job = AuditJob(
+            job_id=str(uuid4()),
+            project_id=project_id,
+            stage=AuditStage.PREPARE,
+            status=JobStatus.RUNNING,
+            started_at=datetime.now().isoformat(),
+        )
+        self.active_jobs[project_id] = job
+
+        stage_labels = {
+            "prepare": "Кроп блоков",
+            "text_analysis": "Анализ текста",
+            "block_analysis": "Анализ блоков",
+            "findings_merge": "Свод замечаний",
+            "norm_verify": "Верификация норм",
+            "excel": "Excel-отчёт",
+        }
+        resume_info = {
+            "stage": stage,
+            "stage_label": stage_labels.get(stage, stage),
+            "detail": "Ручной запуск с этапа",
+            "can_resume": True,
+        }
+        task = asyncio.create_task(
+            self._run_resumed_pipeline(job, stage, resume_info)
+        )
+        self._tasks[project_id] = task
+        return job
+
     async def resume_pipeline(self, project_id: str) -> AuditJob:
         """Продолжить пайплайн с места ошибки."""
         if project_id in self.active_jobs:
@@ -438,7 +504,7 @@ class PipelineManager:
         try:
             # OCR-пайплайн: этапы в правильном порядке
             stages = [
-                "prepare",          # 1: crop_blocks.py
+                "prepare",          # 1: blocks.py crop
                 "crop_blocks",      # 1: кроп блоков (alias prepare)
                 "text_analysis",    # 2: Claude анализ текста MD
                 "block_analysis",   # 3-4: генерация пакетов + анализ блоков
@@ -468,23 +534,35 @@ class PipelineManager:
                 "info",
             )
 
-            output_dir = PROJECTS_DIR / pid / "_output"
-            info_path = PROJECTS_DIR / pid / "project_info.json"
+            output_dir = resolve_project_dir(pid) / "_output"
+            info_path = resolve_project_dir(pid) / "project_info.json"
             with open(info_path, "r", encoding="utf-8") as f:
                 project_info = json.load(f)
 
             # ═══ ЭТАП 1: Кроп image-блоков ═══
             if start_idx <= 0:
+                # Полный перезапуск — очистить все промежуточные файлы
+                self._clean_stage_files(pid, [
+                    "01_text_analysis.json", "02_blocks_analysis.json",
+                    "03_findings.json", "block_batch_*.json", "block_batches.json",
+                ])
                 job.stage = AuditStage.CROP_BLOCKS
                 self._update_pipeline_log(pid, "crop_blocks", "running")
                 print(f"[{pid}:resume] ═══ ЭТАП 1: Кроп image-блоков ═══")
                 await self._log(job, "═══ ЭТАП 1: Кроп image-блоков из PDF ═══")
-                exit_code, _, stderr = await run_script(
-                    str(CROP_BLOCKS_SCRIPT),
-                    [f"projects/{pid}"],
+                exit_code, _, stderr = await self._run_script(
+                    pid,
+                    str(BLOCKS_SCRIPT),
+                    ["crop", _project_path(pid)],
                     on_output=lambda msg: self._log(job, msg),
                 )
-                if exit_code != 0:
+                if exit_code == 2:
+                    # Частичная ошибка: не все блоки скачались (404 и т.п.)
+                    self._update_pipeline_log(pid, "crop_blocks", "error",
+                                               error="Не все блоки скачались. Проверьте актуальность crop_url в result.json")
+                    raise RuntimeError("Кроп блоков: не все image-блоки скачались (HTTP 404). "
+                                       "Обновите OCR-результат и повторите.")
+                elif exit_code != 0:
                     self._update_pipeline_log(pid, "crop_blocks", "error",
                                                error=stderr or f"Exit code: {exit_code}")
                     raise RuntimeError(f"Кроп блоков: {stderr}")
@@ -547,13 +625,14 @@ class PipelineManager:
                     self._reset_job_progress(job)
                     job.stage = AuditStage.CROP_BLOCKS  # reuse для генерации батчей
 
-                    gen_args = [f"projects/{pid}"]
+                    gen_args = [_project_path(pid)]
                     print(f"[{pid}:resume] ═══ ЭТАП 3: Генерация пакетов блоков ═══")
                     await self._log(job, "═══ ЭТАП 3: Генерация пакетов блоков ═══")
 
-                    exit_code, _, stderr = await run_script(
-                        str(GENERATE_BLOCK_BATCHES_SCRIPT),
-                        gen_args,
+                    exit_code, _, stderr = await self._run_script(
+                        pid,
+                        str(BLOCKS_SCRIPT),
+                        ["batches"] + gen_args,
                         on_output=lambda msg: self._log(job, msg),
                     )
                     if exit_code != 0:
@@ -589,16 +668,24 @@ class PipelineManager:
                     completed_count = 0
                     error_count = 0
 
+                    # Время начала этапа — для фильтрации файлов от старых запусков
+                    batch_stage_start = datetime.now().timestamp()
+
                     async def _process_batch(batch):
                         nonlocal completed_count, error_count
                         batch_id = batch["batch_id"]
 
                         result_file = output_dir / f"block_batch_{batch_id:03d}.json"
                         if result_file.exists() and result_file.stat().st_size > 100:
-                            completed_count += 1
-                            job.progress_current = completed_count
-                            await self._progress(job, completed_count, total_batches)
-                            return
+                            # Проверяем что файл от ТЕКУЩЕГО запуска, а не от старого
+                            if result_file.stat().st_mtime >= batch_stage_start:
+                                completed_count += 1
+                                job.progress_current = completed_count
+                                await self._progress(job, completed_count, total_batches)
+                                return
+                            else:
+                                # Файл от старого запуска — удаляем и обрабатываем заново
+                                result_file.unlink()
 
                         async with semaphore:
                             if job.status == JobStatus.CANCELLED:
@@ -614,6 +701,7 @@ class PipelineManager:
                             await self._log(job, f"Пакет {batch_id}/{total_batches}: {block_count} блоков...")
 
                             retries = 0
+                            pause_before_batch = job.pause_total_sec
                             while retries <= RATE_LIMIT_MAX_RETRIES:
                                 batch_start_time = datetime.now()
                                 job.batch_started_at = batch_start_time.isoformat()
@@ -624,7 +712,9 @@ class PipelineManager:
                                 )
                                 self._record_cli_usage(job, cli_result, f"block_batch_{batch_id:03d}")
 
-                                batch_duration = (datetime.now() - batch_start_time).total_seconds()
+                                batch_wall = (datetime.now() - batch_start_time).total_seconds()
+                                batch_pause = job.pause_total_sec - pause_before_batch
+                                batch_duration = max(0, batch_wall - batch_pause)
                                 job.batch_durations.append(batch_duration)
 
                                 if exit_code == 0:
@@ -642,9 +732,18 @@ class PipelineManager:
                                 stdout_text = output_text or ""
                                 stderr_text = cli_result.result_text if cli_result and cli_result.is_error else ""
 
+                                # "Prompt is too long" — нерепетируемая, retry бесполезен
+                                if claude_runner.is_prompt_too_long(exit_code, stdout_text, stderr_text):
+                                    await self._log(job, f"Prompt is too long", "error")
+                                    await self._log(job, f"Пакет {batch_id}: слишком много блоков ({block_count}), пропускаем", "warn")
+                                    break
+
                                 if claude_runner.is_rate_limited(exit_code, stdout_text, stderr_text):
                                     retries += 1
                                     if retries <= RATE_LIMIT_MAX_RETRIES:
+                                        # Jitter 5-30 сек чтобы параллельные пакеты не retry одновременно
+                                        jitter = random.uniform(5, 30)
+                                        await asyncio.sleep(jitter)
                                         can_continue = await self._wait_for_rate_limit(
                                             job, f"пакет {batch_id}", cli_output=stdout_text
                                         )
@@ -683,9 +782,10 @@ class PipelineManager:
                 # Слияние результатов
                 print(f"[{pid}:resume] Слияние block_batch_*.json → 02_blocks_analysis.json")
                 await self._log(job, "Слияние результатов блоков...")
-                exit_code, _, stderr = await run_script(
-                    str(MERGE_BLOCK_RESULTS_SCRIPT),
-                    [f"projects/{pid}"],
+                exit_code, _, stderr = await self._run_script(
+                    pid,
+                    str(BLOCKS_SCRIPT),
+                    ["merge", _project_path(pid)],
                     on_output=lambda msg: self._log(job, msg),
                 )
                 if exit_code != 0:
@@ -744,7 +844,7 @@ class PipelineManager:
                     "03a_norms_verified.json", "norm_checks.json",
                 ])
                 self._reset_job_progress(job)
-                findings_path = PROJECTS_DIR / pid / "_output" / "03_findings.json"
+                findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
                 if findings_path.exists():
                     job.stage = AuditStage.NORM_VERIFY
                     job.status = JobStatus.RUNNING
@@ -767,8 +867,9 @@ class PipelineManager:
             self._update_pipeline_log(pid, "excel", "running")
             print(f"[{pid}:resume] ═══ ЭТАП 7: Excel ═══")
             await self._log(job, "═══ ЭТАП 7: Генерация Excel ═══")
-            project_path = str(PROJECTS_DIR / pid)
-            exit_code, _, _ = await run_script(
+            project_path = str(resolve_project_dir(pid))
+            exit_code, _, _ = await self._run_script(
+                pid,
                 str(GENERATE_EXCEL_SCRIPT),
                 args=[project_path],
                 env_overrides={"AUDIT_NO_OPEN": "1"},
@@ -780,13 +881,18 @@ class PipelineManager:
                 self._update_pipeline_log(pid, "excel", "error",
                                            error=f"Exit code: {exit_code}")
 
-            duration = round((datetime.now() - start_time).total_seconds() / 60, 1)
+            wall_sec = (datetime.now() - start_time).total_seconds()
+            net_sec = max(0, wall_sec - job.pause_total_sec)
+            duration = round(net_sec / 60, 1)
+            wall_duration = round(wall_sec / 60, 1)
             job.status = JobStatus.COMPLETED
-            print(f"[{pid}:resume] ═══ Конвейер завершён за {duration} мин ═══")
-            await self._log(job, f"Конвейер завершён за {duration} мин.", "info")
+            pause_note = f" (паузы: {round(job.pause_total_sec / 60, 1)} мин)" if job.pause_total_sec > 60 else ""
+            print(f"[{pid}:resume] ═══ Конвейер завершён за {duration} мин{pause_note} ═══")
+            await self._log(job, f"Конвейер завершён за {duration} мин{pause_note}.", "info")
 
             await ws_manager.broadcast_to_project(
-                pid, WSMessage.complete(pid, duration_minutes=duration),
+                pid, WSMessage.complete(pid, duration_minutes=duration,
+                                        pause_minutes=round(job.pause_total_sec / 60, 1)),
             )
 
         except asyncio.CancelledError:
@@ -823,9 +929,10 @@ class PipelineManager:
             await self._log(job, "Запуск подготовки проекта (текст + тайлы)...")
             await self._start_heartbeat(job)
 
-            exit_code, stdout, stderr = await run_script(
+            exit_code, stdout, stderr = await self._run_script(
+                pid,
                 str(PROCESS_PROJECT_SCRIPT),
-                [f"projects/{pid}", "--quality", DEFAULT_TILE_QUALITY],
+                [_project_path(pid), "--quality", DEFAULT_TILE_QUALITY],
                 on_output=lambda msg: self._log(job, msg),
             )
 
@@ -874,7 +981,7 @@ class PipelineManager:
         pid = job.project_id
         try:
             self._update_pipeline_log(pid, "tile_audit", "running")
-            output_dir = PROJECTS_DIR / job.project_id / "_output"
+            output_dir = resolve_project_dir(job.project_id) / "_output"
             batches_file = output_dir / "tile_batches.json"
 
             # Шаг 1: Генерация пакетов (если нет или устарели)
@@ -886,7 +993,7 @@ class PipelineManager:
                 # Проверяем актуальность по двум критериям:
                 # 1) tile_config_source должен совпадать
                 # 2) количество тайлов в батчах = реальному количеству на диске
-                info_path = PROJECTS_DIR / job.project_id / "project_info.json"
+                info_path = resolve_project_dir(job.project_id) / "project_info.json"
                 with open(info_path, "r", encoding="utf-8") as f:
                     info = json.load(f)
                 current_source = info.get("tile_config_source", "")
@@ -928,20 +1035,21 @@ class PipelineManager:
 
             if regenerate:
                 job.stage = AuditStage.TILE_BATCHES
-                gen_args = [f"projects/{job.project_id}"]
+                gen_args = [_project_path(job.project_id)]
                 if pages_filter:
                     pages_str = ",".join(str(p) for p in pages_filter)
                     gen_args += ["--pages", pages_str]
                     await self._log(job, f"Генерация пакетов тайлов (страницы: {pages_str})...")
                 else:
                     await self._log(job, "Генерация пакетов тайлов...")
-                exit_code, _, stderr = await run_script(
-                    str(GENERATE_BATCHES_SCRIPT),
-                    gen_args,
+                exit_code, _, stderr = await self._run_script(
+                    pid,
+                    str(BLOCKS_SCRIPT),
+                    ["batches"] + gen_args,
                     on_output=lambda msg: self._log(job, msg),
                 )
                 if exit_code != 0:
-                    raise RuntimeError(f"generate_tile_batches.py: {stderr}")
+                    raise RuntimeError(f"blocks.py batches: {stderr}")
                 await self._log(job, "Пакеты сгенерированы")
 
             # Загружаем пакеты
@@ -963,7 +1071,7 @@ class PipelineManager:
                     await self._log(job, f"Очистка: удалено {deleted_batch_count} старых результатов батчей")
 
             # Загружаем project_info
-            info_path = PROJECTS_DIR / job.project_id / "project_info.json"
+            info_path = resolve_project_dir(job.project_id) / "project_info.json"
             with open(info_path, "r", encoding="utf-8") as f:
                 project_info = json.load(f)
 
@@ -1013,6 +1121,7 @@ class PipelineManager:
 
                     # ── Запуск с retry при rate limit ──
                     retries = 0
+                    pause_before_batch = job.pause_total_sec
                     while retries <= RATE_LIMIT_MAX_RETRIES:
                         batch_start_time = datetime.now()
                         job.batch_started_at = batch_start_time.isoformat()
@@ -1024,7 +1133,9 @@ class PipelineManager:
                         self._record_cli_usage(job, cli_result, f"tile_batch_{batch_id:03d}")
                         print(f"[{pid}:tile] Пакет {batch_id}/{total}: exit_code={exit_code}")
 
-                        batch_duration = (datetime.now() - batch_start_time).total_seconds()
+                        batch_wall = (datetime.now() - batch_start_time).total_seconds()
+                        batch_pause = job.pause_total_sec - pause_before_batch
+                        batch_duration = max(0, batch_wall - batch_pause)
                         job.batch_durations.append(batch_duration)
 
                         # Успех
@@ -1109,9 +1220,10 @@ class PipelineManager:
             if job.status != JobStatus.CANCELLED:
                 job.stage = AuditStage.MERGE
                 await self._log(job, "Слияние результатов пакетного анализа...")
-                exit_code, _, stderr = await run_script(
-                    str(MERGE_RESULTS_SCRIPT),
-                    [f"projects/{job.project_id}"],
+                exit_code, _, stderr = await self._run_script(
+                    job.project_id,
+                    str(BLOCKS_SCRIPT),
+                    ["merge", _project_path(job.project_id)],
                     on_output=lambda msg: self._log(job, msg),
                 )
                 if exit_code == 0:
@@ -1171,7 +1283,7 @@ class PipelineManager:
         pid = job.project_id
         try:
             self._update_pipeline_log(pid, "main_audit", "running")
-            info_path = PROJECTS_DIR / pid / "project_info.json"
+            info_path = resolve_project_dir(pid) / "project_info.json"
             with open(info_path, "r", encoding="utf-8") as f:
                 project_info = json.load(f)
 
@@ -1194,12 +1306,7 @@ class PipelineManager:
             self._record_cli_usage(job, cli_result, "main_audit")
 
             if exit_code == 0:
-                # Сохраняем вывод как audit_results
-                ts = datetime.now().strftime("%Y%m%d_%H%M")
-                out_file = PROJECTS_DIR / pid / "_output" / f"audit_results_{ts}.md"
-                with open(out_file, "w", encoding="utf-8") as f:
-                    f.write(output)
-                await self._log(job, f"Аудит завершён. Результат: {out_file.name}", "info")
+                await self._log(job, "Аудит завершён", "info")
                 job.status = JobStatus.COMPLETED
                 self._update_pipeline_log(pid, "main_audit", "done", message="OK")
             elif claude_runner.is_cancelled(exit_code):
@@ -1218,11 +1325,7 @@ class PipelineManager:
                     )
                     self._record_cli_usage(job, cli_result, "main_audit_retry")
                     if exit_code == 0:
-                        ts = datetime.now().strftime("%Y%m%d_%H%M")
-                        out_file = PROJECTS_DIR / pid / "_output" / f"audit_results_{ts}.md"
-                        with open(out_file, "w", encoding="utf-8") as f:
-                            f.write(output)
-                        await self._log(job, f"Аудит завершён (после паузы). Результат: {out_file.name}", "info")
+                        await self._log(job, "Аудит завершён (после паузы)", "info")
                         job.status = JobStatus.COMPLETED
                         self._update_pipeline_log(pid, "main_audit", "done", message="OK (после rate limit паузы)")
                     else:
@@ -1290,13 +1393,13 @@ class PipelineManager:
             self._update_pipeline_log(pid, "norm_verify", "running")
             import sys
             sys.path.insert(0, str(BASE_DIR))
-            from verify_norms import (
+            from norms import (
                 extract_norms_from_findings,
                 format_norms_for_template,
                 format_findings_to_fix,
             )
 
-            output_dir = PROJECTS_DIR / job.project_id / "_output"
+            output_dir = resolve_project_dir(job.project_id) / "_output"
             findings_path = output_dir / "03_findings.json"
             norm_checks_path = output_dir / "norm_checks.json"
             verified_path = output_dir / "03a_norms_verified.json"
@@ -1449,9 +1552,9 @@ class PipelineManager:
         try:
             import sys
             sys.path.insert(0, str(BASE_DIR))
-            from update_norms_db import load_norms_db, save_norms_db, update_from_project
+            from norms import load_norms_db, save_norms_db, update_from_project
 
-            project_path = PROJECTS_DIR / job.project_id
+            project_path = resolve_project_dir(job.project_id)
             db = load_norms_db()
             stats = update_from_project(db, project_path)
 
@@ -1514,8 +1617,21 @@ class PipelineManager:
         start_time = datetime.now()
         pid = job.project_id
         try:
-            output_dir = PROJECTS_DIR / pid / "_output"
-            info_path = PROJECTS_DIR / pid / "project_info.json"
+            output_dir = resolve_project_dir(pid) / "_output"
+            info_path = resolve_project_dir(pid) / "project_info.json"
+
+            # ═══ Проверка MD-файла (обязательный источник текста) ═══
+            project_dir = resolve_project_dir(pid)
+            md_candidates = [
+                f for f in project_dir.iterdir()
+                if f.suffix == ".md" and f.name.endswith("_document.md")
+            ]
+            if not md_candidates:
+                raise RuntimeError(
+                    f"MD-файл не найден для проекта {pid}. "
+                    f"Анализ без MD-файла не поддерживается. "
+                    f"Создайте MD через Chandra OCR и положите в папку проекта."
+                )
 
             # ═══ ЭТАП 1: Подготовка текста ═══
             job.stage = AuditStage.PREPARE
@@ -1523,9 +1639,10 @@ class PipelineManager:
             print(f"[{pid}:smart] ═══ ЭТАП 1: Подготовка текста ═══")
             await self._log(job, "═══ ЭТАП 1: Подготовка текста ═══")
 
-            exit_code, _, stderr = await run_script(
+            exit_code, _, stderr = await self._run_script(
+                pid,
                 str(PROCESS_PROJECT_SCRIPT),
-                [f"projects/{pid}"],
+                [_project_path(pid)],
                 on_output=lambda msg: self._log(job, msg),
             )
             if exit_code != 0:
@@ -1614,9 +1731,10 @@ class PipelineManager:
                 print(f"[{pid}:smart] ═══ ЭТАП 3: Нарезка тайлов (стр. {pages_str}) ═══")
                 await self._log(job, f"═══ ЭТАП 3: Нарезка тайлов (стр. {pages_str}) ═══")
 
-                exit_code, _, stderr = await run_script(
+                exit_code, _, stderr = await self._run_script(
+                    pid,
                     str(PROCESS_PROJECT_SCRIPT),
-                    [f"projects/{pid}", "--pages", pages_str, "--quality", DEFAULT_TILE_QUALITY],
+                    [_project_path(pid), "--pages", pages_str, "--quality", DEFAULT_TILE_QUALITY],
                     on_output=lambda msg: self._log(job, msg),
                 )
                 if exit_code != 0:
@@ -1722,9 +1840,10 @@ class PipelineManager:
                                 await self._log(job, f"Gap analysis: нужны ещё страницы {pages_str}")
 
                                 # Донарезка тайлов
-                                exit_code, _, stderr = await run_script(
+                                exit_code, _, stderr = await self._run_script(
+                                    pid,
                                     str(PROCESS_PROJECT_SCRIPT),
-                                    [f"projects/{pid}", "--pages", pages_str, "--quality", DEFAULT_TILE_QUALITY],
+                                    [_project_path(pid), "--pages", pages_str, "--quality", DEFAULT_TILE_QUALITY],
                                     on_output=lambda msg: self._log(job, msg),
                                 )
                                 if exit_code != 0:
@@ -1748,7 +1867,7 @@ class PipelineManager:
                 "03a_norms_verified.json", "norm_checks.json",
             ])
             self._reset_job_progress(job)
-            findings_path = PROJECTS_DIR / pid / "_output" / "03_findings.json"
+            findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
             if findings_path.exists():
                 job.stage = AuditStage.NORM_VERIFY
                 job.status = JobStatus.RUNNING
@@ -1771,8 +1890,9 @@ class PipelineManager:
             self._update_pipeline_log(pid, "excel", "running")
             print(f"[{pid}:smart] ═══ ЭТАП 7: Excel ═══")
             await self._log(job, "═══ ЭТАП 7: Генерация Excel ═══")
-            project_path = str(PROJECTS_DIR / pid)
-            exit_code, _, _ = await run_script(
+            project_path = str(resolve_project_dir(pid))
+            exit_code, _, _ = await self._run_script(
+                pid,
                 str(GENERATE_EXCEL_SCRIPT),
                 args=[project_path],
                 env_overrides={"AUDIT_NO_OPEN": "1"},
@@ -1784,13 +1904,17 @@ class PipelineManager:
                 self._update_pipeline_log(pid, "excel", "error",
                                            error=f"Exit code: {exit_code}")
 
-            duration = round((datetime.now() - start_time).total_seconds() / 60, 1)
+            wall_sec = (datetime.now() - start_time).total_seconds()
+            net_sec = max(0, wall_sec - job.pause_total_sec)
+            duration = round(net_sec / 60, 1)
             job.status = JobStatus.COMPLETED
-            print(f"[{pid}:smart] ═══ Smart Parallel завершён за {duration} мин ═══")
-            await self._log(job, f"Smart Parallel конвейер завершён за {duration} мин.", "info")
+            pause_note = f" (паузы: {round(job.pause_total_sec / 60, 1)} мин)" if job.pause_total_sec > 60 else ""
+            print(f"[{pid}:smart] ═══ Smart Parallel завершён за {duration} мин{pause_note} ═══")
+            await self._log(job, f"Smart Parallel конвейер завершён за {duration} мин{pause_note}.", "info")
 
             await ws_manager.broadcast_to_project(
-                pid, WSMessage.complete(pid, duration_minutes=duration),
+                pid, WSMessage.complete(pid, duration_minutes=duration,
+                                        pause_minutes=round(job.pause_total_sec / 60, 1)),
             )
 
         except asyncio.CancelledError:
@@ -1805,11 +1929,16 @@ class PipelineManager:
             job.completed_at = datetime.now().isoformat()
             self._cleanup(pid)
 
-    # ─── Стандартный аудит (OCR-пайплайн) ───
-    async def start_standard_audit(self, project_id: str) -> AuditJob:
-        """Стандартный аудит: кроп блоков → текстовый анализ → выборочные блоки → свод."""
+    # ─── Запуск аудита (OCR-пайплайн) ───
+    async def start_audit(self, project_id: str) -> AuditJob:
+        """Аудит: кроп блоков → текстовый анализ → ВСЕ блоки → свод."""
         if project_id in self.active_jobs:
             raise RuntimeError(f"Аудит уже запущен для {project_id}")
+
+        # Убить возможные зомби-процессы от предыдущего запуска
+        killed = await kill_all_processes(project_id)
+        if killed:
+            print(f"[{project_id}] Убито {killed} зомби-процессов от предыдущего запуска")
 
         # Сброс счётчика токенов — показываем только текущий прогон
         usage_tracker.clear_project_usage(project_id)
@@ -1822,40 +1951,24 @@ class PipelineManager:
             started_at=datetime.now().isoformat(),
         )
         self.active_jobs[project_id] = job
-        task = asyncio.create_task(self._run_standard_pipeline(job))
+        task = asyncio.create_task(self._run_ocr_pipeline(job))
         self._tasks[project_id] = task
         return job
 
-    async def start_pro_audit(self, project_id: str) -> AuditJob:
-        """PRO аудит: кроп блоков → текстовый анализ → ВСЕ блоки → свод."""
-        if project_id in self.active_jobs:
-            raise RuntimeError(f"Аудит уже запущен для {project_id}")
+    # Legacy aliases
+    start_standard_audit = start_audit
+    start_pro_audit = start_audit
 
-        # Сброс счётчика токенов — показываем только текущий прогон
-        usage_tracker.clear_project_usage(project_id)
-
-        job = AuditJob(
-            job_id=str(uuid4()),
-            project_id=project_id,
-            stage=AuditStage.CROP_BLOCKS,
-            status=JobStatus.RUNNING,
-            started_at=datetime.now().isoformat(),
-        )
-        self.active_jobs[project_id] = job
-        task = asyncio.create_task(self._run_pro_pipeline(job))
-        self._tasks[project_id] = task
-        return job
-
-    async def _run_ocr_pipeline(self, job: AuditJob, mode: str = "standard"):
+    async def _run_ocr_pipeline(self, job: AuditJob):
         """
-        Общий OCR-пайплайн для standard и pro режимов.
+        OCR-пайплайн: полный аудит всех блоков.
 
         Этапы:
-        1. crop_blocks.py → _output/blocks/
+        1. blocks.py crop → _output/blocks/
         2. Claude: text_analysis → 01_text_analysis.json + blocks_for_review[]
-        3. generate_block_batches.py → block_batches.json
+        3. blocks.py batches → block_batches.json
         4. Claude: block_batch (параллельно) → block_batch_NNN.json
-        5. merge_block_results.py → 02_blocks_analysis.json
+        5. blocks.py merge → 02_blocks_analysis.json
         6. Claude: findings_merge → 03_findings.json
         7. norm_verify
         8. Excel
@@ -1863,21 +1976,38 @@ class PipelineManager:
         start_time = datetime.now()
         pid = job.project_id
         try:
-            output_dir = PROJECTS_DIR / pid / "_output"
-            info_path = PROJECTS_DIR / pid / "project_info.json"
+            output_dir = resolve_project_dir(pid) / "_output"
+            info_path = resolve_project_dir(pid) / "project_info.json"
 
             with open(info_path, "r", encoding="utf-8") as f:
                 project_info = json.load(f)
 
+            # ═══ Проверка MD-файла (обязательный источник текста) ═══
+            md_file = project_info.get("md_file")
+            if not md_file:
+                # Проверим наличие *_document.md в папке проекта
+                project_dir = resolve_project_dir(pid)
+                md_candidates = [
+                    f for f in project_dir.iterdir()
+                    if f.suffix == ".md" and f.name.endswith("_document.md")
+                ]
+                if not md_candidates:
+                    raise RuntimeError(
+                        f"MD-файл не найден для проекта {pid}. "
+                        f"Анализ без MD-файла не поддерживается. "
+                        f"Создайте MD через Chandra OCR и положите в папку проекта."
+                    )
+
             # ═══ ЭТАП 1: Кроп image-блоков ═══
             job.stage = AuditStage.CROP_BLOCKS
             self._update_pipeline_log(pid, "crop_blocks", "running")
-            print(f"[{pid}:{mode}] ═══ ЭТАП 1: Кроп image-блоков ═══")
+            print(f"[{pid}] ═══ ЭТАП 1: Кроп image-блоков ═══")
             await self._log(job, "═══ ЭТАП 1: Кроп image-блоков из PDF ═══")
 
-            exit_code, _, stderr = await run_script(
-                str(CROP_BLOCKS_SCRIPT),
-                [f"projects/{pid}"],
+            exit_code, _, stderr = await self._run_script(
+                pid,
+                str(BLOCKS_SCRIPT),
+                ["crop", _project_path(pid)],
                 on_output=lambda msg: self._log(job, msg),
             )
             if exit_code != 0:
@@ -1885,7 +2015,7 @@ class PipelineManager:
                                            error=stderr or f"Exit code: {exit_code}")
                 raise RuntimeError(f"Кроп блоков: {stderr}")
             self._update_pipeline_log(pid, "crop_blocks", "done", message="OK")
-            print(f"[{pid}:{mode}] ЭТАП 1 OK")
+            print(f"[{pid}] ЭТАП 1 OK")
 
             if job.status == JobStatus.CANCELLED:
                 return
@@ -1899,7 +2029,7 @@ class PipelineManager:
             job.stage = AuditStage.TEXT_ANALYSIS
             job.status = JobStatus.RUNNING
             self._update_pipeline_log(pid, "text_analysis", "running")
-            print(f"[{pid}:{mode}] ═══ ЭТАП 2: Текстовый анализ MD ═══")
+            print(f"[{pid}] ═══ ЭТАП 2: Текстовый анализ MD ═══")
             await self._log(job, "═══ ЭТАП 2: Текстовый анализ MD (Claude) ═══")
             await self._start_heartbeat(job)
 
@@ -1938,7 +2068,7 @@ class PipelineManager:
                 raise RuntimeError("01_text_analysis.json не создан")
 
             self._update_pipeline_log(pid, "text_analysis", "done", message="OK")
-            print(f"[{pid}:{mode}] ЭТАП 2 OK")
+            print(f"[{pid}] ЭТАП 2 OK")
 
             if job.status == JobStatus.CANCELLED:
                 return
@@ -1947,39 +2077,17 @@ class PipelineManager:
             self._reset_job_progress(job)
             job.stage = AuditStage.CROP_BLOCKS  # reuse для генерации батчей
 
-            # Определяем какие блоки анализировать
-            gen_args = [f"projects/{pid}"]
-            if mode == "standard":
-                # Только HIGH + MEDIUM блоки (LOW и SKIP пропускаются для экономии)
-                with open(text_analysis_path, "r", encoding="utf-8") as f:
-                    ta_data = json.load(f)
-                blocks_for_review = ta_data.get("blocks_for_review", [])
-                all_count = len(blocks_for_review)
-                # Фильтрация: только HIGH и MEDIUM приоритеты
-                blocks_for_review = [
-                    b for b in blocks_for_review
-                    if b.get("priority", "").upper() in ("HIGH", "MEDIUM")
-                ]
-                block_ids = [b["block_id"] for b in blocks_for_review]
-                skipped_low = all_count - len(block_ids)
-                if block_ids:
-                    gen_args += ["--block-ids", ",".join(block_ids)]
-                    msg = f"Стандартный режим: {len(block_ids)} блоков (HIGH+MEDIUM)"
-                    if skipped_low > 0:
-                        msg += f", пропущено {skipped_low} LOW-приоритетных"
-                    await self._log(job, msg)
-                else:
-                    await self._log(job, "Нет блоков для визуальной проверки — пропуск", "warn")
-            else:
-                # PRO: все блоки (включая LOW)
-                await self._log(job, "PRO режим: анализ ВСЕХ image-блоков (включая LOW)")
+            # Все блоки — полное покрытие
+            gen_args = [_project_path(pid)]
+            await self._log(job, "Анализ ВСЕХ image-блоков")
 
-            print(f"[{pid}:{mode}] ═══ ЭТАП 3: Генерация пакетов блоков ═══")
+            print(f"[{pid}] ═══ ЭТАП 3: Генерация пакетов блоков ═══")
             await self._log(job, "═══ ЭТАП 3: Генерация пакетов блоков ═══")
 
-            exit_code, _, stderr = await run_script(
-                str(GENERATE_BLOCK_BATCHES_SCRIPT),
-                gen_args,
+            exit_code, _, stderr = await self._run_script(
+                pid,
+                str(BLOCKS_SCRIPT),
+                ["batches"] + gen_args,
                 on_output=lambda msg: self._log(job, msg),
             )
             if exit_code != 0:
@@ -2008,7 +2116,7 @@ class PipelineManager:
                 self._update_pipeline_log(pid, "block_analysis", "running")
 
                 parallel = MAX_PARALLEL_BATCHES
-                print(f"[{pid}:{mode}] ═══ ЭТАП 4: Анализ блоков ({total_batches} пакетов x{parallel}) ═══")
+                print(f"[{pid}] ═══ ЭТАП 4: Анализ блоков ({total_batches} пакетов x{parallel}) ═══")
                 await self._log(
                     job,
                     f"═══ ЭТАП 4: Анализ блоков ({total_batches} пакетов, x{parallel} параллельно) ═══"
@@ -2017,6 +2125,8 @@ class PipelineManager:
                 semaphore = asyncio.Semaphore(parallel)
                 completed_count = 0
                 error_count = 0
+                # Время начала этапа — для фильтрации файлов от старых запусков
+                block_stage_start = datetime.now().timestamp()
 
                 async def _process_block_batch(batch):
                     nonlocal completed_count, error_count
@@ -2024,10 +2134,15 @@ class PipelineManager:
 
                     result_file = output_dir / f"block_batch_{batch_id:03d}.json"
                     if result_file.exists() and result_file.stat().st_size > 100:
-                        completed_count += 1
-                        job.progress_current = completed_count
-                        await self._progress(job, completed_count, total_batches)
-                        return
+                        # Проверяем что файл от ТЕКУЩЕГО запуска, а не от старого
+                        if result_file.stat().st_mtime >= block_stage_start:
+                            completed_count += 1
+                            job.progress_current = completed_count
+                            await self._progress(job, completed_count, total_batches)
+                            return
+                        else:
+                            # Файл от старого запуска — удаляем и обрабатываем заново
+                            result_file.unlink()
 
                     async with semaphore:
                         if job.status == JobStatus.CANCELLED:
@@ -2043,6 +2158,7 @@ class PipelineManager:
                         await self._log(job, f"Пакет {batch_id}/{total_batches}: {block_count} блоков...")
 
                         retries = 0
+                        pause_before_batch = job.pause_total_sec
                         while retries <= RATE_LIMIT_MAX_RETRIES:
                             batch_start_time = datetime.now()
                             job.batch_started_at = batch_start_time.isoformat()
@@ -2053,7 +2169,9 @@ class PipelineManager:
                             )
                             self._record_cli_usage(job, cli_result, f"block_batch_{batch_id:03d}")
 
-                            batch_duration = (datetime.now() - batch_start_time).total_seconds()
+                            batch_wall = (datetime.now() - batch_start_time).total_seconds()
+                            batch_pause = job.pause_total_sec - pause_before_batch
+                            batch_duration = max(0, batch_wall - batch_pause)
                             job.batch_durations.append(batch_duration)
 
                             if exit_code == 0:
@@ -2109,9 +2227,10 @@ class PipelineManager:
 
                 # Шаг 5: Слияние результатов блоков
                 await self._log(job, "Слияние результатов анализа блоков...")
-                exit_code, _, stderr = await run_script(
-                    str(MERGE_BLOCK_RESULTS_SCRIPT),
-                    [f"projects/{pid}"],
+                exit_code, _, stderr = await self._run_script(
+                    pid,
+                    str(BLOCKS_SCRIPT),
+                    ["merge", _project_path(pid)],
                     on_output=lambda msg: self._log(job, msg),
                 )
                 if exit_code == 0:
@@ -2138,7 +2257,7 @@ class PipelineManager:
             job.stage = AuditStage.FINDINGS_MERGE
             job.status = JobStatus.RUNNING
             self._update_pipeline_log(pid, "findings_merge", "running")
-            print(f"[{pid}:{mode}] ═══ ЭТАП 6: Свод замечаний ═══")
+            print(f"[{pid}] ═══ ЭТАП 6: Свод замечаний ═══")
             await self._log(job, "═══ ЭТАП 6: Свод замечаний (Claude) ═══")
 
             can_go = await self._check_before_launch(job)
@@ -2184,11 +2303,11 @@ class PipelineManager:
                 "03a_norms_verified.json", "norm_checks.json",
             ])
             self._reset_job_progress(job)
-            findings_path = PROJECTS_DIR / pid / "_output" / "03_findings.json"
+            findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
             if findings_path.exists():
                 job.stage = AuditStage.NORM_VERIFY
                 job.status = JobStatus.RUNNING
-                print(f"[{pid}:{mode}] ═══ ЭТАП 7: Верификация норм ═══")
+                print(f"[{pid}] ═══ ЭТАП 7: Верификация норм ═══")
                 await self._log(job, "═══ ЭТАП 7: Верификация нормативных ссылок ═══")
                 await self._run_norm_verification(job, standalone=False)
 
@@ -2205,10 +2324,11 @@ class PipelineManager:
             job.stage = AuditStage.EXCEL
             job.status = JobStatus.RUNNING
             self._update_pipeline_log(pid, "excel", "running")
-            print(f"[{pid}:{mode}] ═══ ЭТАП 8: Excel ═══")
+            print(f"[{pid}] ═══ ЭТАП 8: Excel ═══")
             await self._log(job, "═══ ЭТАП 8: Генерация Excel ═══")
-            project_path = str(PROJECTS_DIR / pid)
-            exit_code, _, _ = await run_script(
+            project_path = str(resolve_project_dir(pid))
+            exit_code, _, _ = await self._run_script(
+                pid,
                 str(GENERATE_EXCEL_SCRIPT),
                 args=[project_path],
                 env_overrides={"AUDIT_NO_OPEN": "1"},
@@ -2220,14 +2340,17 @@ class PipelineManager:
                 self._update_pipeline_log(pid, "excel", "error",
                                            error=f"Exit code: {exit_code}")
 
-            duration = round((datetime.now() - start_time).total_seconds() / 60, 1)
+            wall_sec = (datetime.now() - start_time).total_seconds()
+            net_sec = max(0, wall_sec - job.pause_total_sec)
+            duration = round(net_sec / 60, 1)
             job.status = JobStatus.COMPLETED
-            mode_label = "Стандартный" if mode == "standard" else "PRO"
-            print(f"[{pid}:{mode}] ═══ {mode_label} аудит завершён за {duration} мин ═══")
-            await self._log(job, f"{mode_label} аудит завершён за {duration} мин.", "info")
+            pause_note = f" (паузы: {round(job.pause_total_sec / 60, 1)} мин)" if job.pause_total_sec > 60 else ""
+            print(f"[{pid}] ═══ Аудит завершён за {duration} мин{pause_note} ═══")
+            await self._log(job, f"Аудит завершён за {duration} мин{pause_note}.", "info")
 
             await ws_manager.broadcast_to_project(
-                pid, WSMessage.complete(pid, duration_minutes=duration),
+                pid, WSMessage.complete(pid, duration_minutes=duration,
+                                        pause_minutes=round(job.pause_total_sec / 60, 1)),
             )
 
         except asyncio.CancelledError:
@@ -2241,14 +2364,6 @@ class PipelineManager:
         finally:
             job.completed_at = datetime.now().isoformat()
             self._cleanup(pid)
-
-    async def _run_standard_pipeline(self, job: AuditJob):
-        """Стандартный аудит: выборочные блоки."""
-        await self._run_ocr_pipeline(job, mode="standard")
-
-    async def _run_pro_pipeline(self, job: AuditJob):
-        """PRO аудит: все блоки."""
-        await self._run_ocr_pipeline(job, mode="pro")
 
     # ─── Запуск ВСЕХ проектов последовательно ───
     # ─── Batch (групповые действия для выбранных проектов) ───
@@ -2296,9 +2411,12 @@ class PipelineManager:
                 )
             )
 
-            for idx, item in enumerate(queue.items):
+            idx = 0
+            while idx < len(queue.items):
+                item = queue.items[idx]
                 if queue.status == "cancelled":
                     item.status = "cancelled"
+                    idx += 1
                     continue
 
                 queue.current_index = idx
@@ -2319,6 +2437,7 @@ class PipelineManager:
                     await ws_manager.broadcast_global(
                         WSMessage.log("__BATCH__", f"  ⏭ Пропуск {pid}: уже выполняется", "warn")
                     )
+                    idx += 1
                     continue
 
                 try:
@@ -2345,17 +2464,16 @@ class PipelineManager:
                         await self._run_resumed_pipeline(job, resume_info["stage"], resume_info)
                     elif action == "optimization":
                         await self._run_optimization(job)
-                    elif action in ("standard", "pro"):
-                        proj_dir = PROJECTS_DIR / pid
+                    elif action in ("audit", "standard", "pro"):
+                        proj_dir = resolve_project_dir(pid)
                         if list(proj_dir.glob("*_result.json")):
-                            await self._run_ocr_pipeline(job, mode=action)
+                            await self._run_ocr_pipeline(job)
                         else:
                             await self._run_smart_pipeline(job)
-                    elif action in ("standard+optimization", "pro+optimization"):
-                        mode = action.split("+")[0]  # standard | pro
-                        proj_dir = PROJECTS_DIR / pid
+                    elif action in ("audit+optimization", "standard+optimization", "pro+optimization"):
+                        proj_dir = resolve_project_dir(pid)
                         if list(proj_dir.glob("*_result.json")):
-                            await self._run_ocr_pipeline(job, mode=mode)
+                            await self._run_ocr_pipeline(job)
                         else:
                             await self._run_smart_pipeline(job)
                         # После аудита — оптимизация (если аудит успешен)
@@ -2365,9 +2483,9 @@ class PipelineManager:
                             await self._run_optimization(job)
                     else:
                         # fallback: auto-detect
-                        proj_dir = PROJECTS_DIR / pid
+                        proj_dir = resolve_project_dir(pid)
                         if list(proj_dir.glob("*_result.json")):
-                            await self._run_ocr_pipeline(job, mode="standard")
+                            await self._run_ocr_pipeline(job)
                         else:
                             await self._run_smart_pipeline(job)
 
@@ -2399,6 +2517,8 @@ class PipelineManager:
                     self.active_jobs.pop(pid, None)
                     self._tasks.pop(pid, None)
                     await self._broadcast_batch_progress(queue)
+
+                idx += 1
 
             # Итог
             queue.status = "completed"
@@ -2434,6 +2554,37 @@ class PipelineManager:
         if current_item.status == "running":
             await self.cancel(current_item.project_id)
         return True
+
+    async def add_to_batch(self, project_ids: list[str], action: str | None = None) -> BatchQueueStatus:
+        """Добавить проекты в работающую batch-очередь."""
+        queue = self._batch_queue
+        if not queue or queue.status != "running":
+            raise RuntimeError("Нет активной групповой очереди")
+
+        effective_action = action or queue.action
+        existing_ids = {item.project_id for item in queue.items}
+        added = []
+        for pid in project_ids:
+            if pid in existing_ids:
+                continue
+            item = BatchQueueItem(project_id=pid, action=effective_action)
+            queue.items.append(item)
+            existing_ids.add(pid)
+            added.append(pid)
+
+        if added:
+            queue.total = len(queue.items)
+            # Обновить meta-job
+            meta_job = self.active_jobs.get("__BATCH__")
+            if meta_job:
+                meta_job.progress_total = queue.total
+
+            await ws_manager.broadcast_global(
+                WSMessage.log("__BATCH__", f"+ Добавлено в очередь: {len(added)} проектов", "info")
+            )
+            await self._broadcast_batch_progress(queue)
+
+        return queue
 
     def get_batch_queue(self) -> Optional[BatchQueueStatus]:
         """Получить текущую batch-очередь."""
@@ -2540,10 +2691,10 @@ class PipelineManager:
                     self.active_jobs[project_id] = job
                     self._tasks[project_id] = asyncio.current_task()
 
-                    # OCR → standard pipeline, иначе smart
-                    proj_dir = PROJECTS_DIR / project_id
+                    # OCR → ocr pipeline, иначе smart
+                    proj_dir = resolve_project_dir(project_id)
                     if list(proj_dir.glob("*_result.json")):
-                        await self._run_ocr_pipeline(job, mode="standard")
+                        await self._run_ocr_pipeline(job)
                     else:
                         await self._run_smart_pipeline(job)
 
@@ -2636,7 +2787,7 @@ class PipelineManager:
         pid = job.project_id
         try:
             self._update_pipeline_log(pid, "optimization", "running")
-            info_path = PROJECTS_DIR / pid / "project_info.json"
+            info_path = resolve_project_dir(pid) / "project_info.json"
             with open(info_path, "r", encoding="utf-8") as f:
                 project_info = json.load(f)
 
@@ -2660,7 +2811,7 @@ class PipelineManager:
 
             if exit_code == 0:
                 # Проверяем что optimization.json создан
-                opt_file = PROJECTS_DIR / pid / "_output" / "optimization.json"
+                opt_file = resolve_project_dir(pid) / "_output" / "optimization.json"
                 if opt_file.exists():
                     size_kb = round(opt_file.stat().st_size / 1024, 1)
                     # Читаем meta для лога

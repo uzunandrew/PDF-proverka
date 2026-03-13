@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from webapp.services.pipeline_service import pipeline_manager
 from webapp.services import project_service
-from webapp.config import PROJECTS_DIR
+from webapp.services.project_service import resolve_project_dir
 
 router = APIRouter(prefix="/api/optimization", tags=["optimization"])
 
@@ -22,19 +22,14 @@ async def start_optimization(project_id: str):
         raise HTTPException(409, str(e))
 
 
-@router.get("/{project_id}")
-async def get_optimization(project_id: str):
-    """Получить результаты оптимизации (optimization.json)."""
-    opt_path = PROJECTS_DIR / project_id / "_output" / "optimization.json"
-    if not opt_path.exists():
-        return {"project_id": project_id, "has_data": False, "data": None}
-
-    try:
-        with open(opt_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return {"project_id": project_id, "has_data": True, "data": data}
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise HTTPException(500, f"Ошибка чтения optimization.json: {e}")
+@router.get("/{project_id}/block-map")
+async def get_optimization_block_map(project_id: str):
+    """Маппинг optimization_id → [block_ids] для подсветки блоков."""
+    from webapp.services.findings_service import get_optimization_block_map as _get_map
+    result = _get_map(project_id)
+    if result is None:
+        raise HTTPException(404, f"Данные оптимизации не найдены для '{project_id}'")
+    return result
 
 
 @router.get("/{project_id}/status")
@@ -51,7 +46,7 @@ async def get_optimization_status(project_id: str):
         and job.status.value == "running"
     )
 
-    opt_path = PROJECTS_DIR / project_id / "_output" / "optimization.json"
+    opt_path = resolve_project_dir(project_id) / "_output" / "optimization.json"
     has_results = opt_path.exists() and opt_path.stat().st_size > 100
 
     return {
@@ -60,6 +55,21 @@ async def get_optimization_status(project_id: str):
         "is_running": is_running,
         "has_results": has_results,
     }
+
+
+@router.get("/{project_id}")
+async def get_optimization(project_id: str):
+    """Получить результаты оптимизации (optimization.json)."""
+    opt_path = resolve_project_dir(project_id) / "_output" / "optimization.json"
+    if not opt_path.exists():
+        return {"project_id": project_id, "has_data": False, "data": None}
+
+    try:
+        with open(opt_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {"project_id": project_id, "has_data": True, "data": data}
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(500, f"Ошибка чтения optimization.json: {e}")
 
 
 @router.delete("/{project_id}/cancel")

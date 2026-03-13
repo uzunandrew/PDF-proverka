@@ -32,6 +32,12 @@ class DetectDisciplineRequest(BaseModel):
     text_sample: str = ""
 
 
+class AddDisciplineRequest(BaseModel):
+    code: str
+    name: str
+    color: str = "#666"
+
+
 @router.post("/detect-discipline")
 async def detect_discipline(req: DetectDisciplineRequest):
     """Автодетекция дисциплины по имени папки и/или тексту."""
@@ -39,13 +45,60 @@ async def detect_discipline(req: DetectDisciplineRequest):
     return {"code": code}
 
 
+@router.post("/disciplines")
+async def add_discipline(req: AddDisciplineRequest):
+    """Добавить пользовательский раздел."""
+    try:
+        disc = discipline_service.add_discipline(req.code, req.name, req.color)
+        return {"status": "ok", "discipline": disc}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class UpdateDisciplineRequest(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+
+
+@router.put("/disciplines/{code}")
+async def update_discipline(code: str, req: UpdateDisciplineRequest):
+    """Обновить параметры раздела."""
+    try:
+        disc = discipline_service.update_discipline(code, req.name, req.color)
+        return {"status": "ok", "discipline": disc}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class ReorderDisciplinesRequest(BaseModel):
+    codes: list[str]
+
+
+@router.post("/disciplines/reorder")
+async def reorder_disciplines(req: ReorderDisciplinesRequest):
+    """Переупорядочить разделы."""
+    discipline_service.reorder_disciplines(req.codes)
+    return {"status": "ok"}
+
+
+@router.delete("/disciplines/{code}")
+async def delete_discipline(code: str):
+    """Удалить раздел."""
+    try:
+        discipline_service.delete_discipline(code)
+        return {"status": "ok"}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 # ─── Статичные роуты (ПЕРЕД динамическими /{project_id}/...) ───
 
 @router.get("")
 async def list_projects():
     """Список всех проектов с их статусом."""
+    from webapp.config import OBJECT_NAME
     projects = project_service.list_projects()
-    return {"projects": [p.model_dump() for p in projects]}
+    return {"projects": [p.model_dump() for p in projects], "object_name": OBJECT_NAME}
 
 
 @router.get("/scan")
@@ -61,6 +114,43 @@ async def register_project(req: RegisterProjectRequest):
     try:
         info = project_service.register_project(
             folder=req.folder,
+            pdf_file=req.pdf_file,
+            md_file=req.md_file,
+            name=req.name,
+            section=req.section,
+            description=req.description,
+        )
+        return {"status": "ok", "project_info": info}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class ScanExternalRequest(BaseModel):
+    path: str
+
+
+class RegisterExternalRequest(BaseModel):
+    source_path: str
+    pdf_file: str
+    md_file: Optional[str] = None
+    name: Optional[str] = None
+    section: str = "EM"
+    description: str = ""
+
+
+@router.post("/scan-external")
+async def scan_external(req: ScanExternalRequest):
+    """Сканировать внешнюю папку — найти подпапки с PDF."""
+    folders = project_service.scan_external_folder(req.path)
+    return {"folders": folders}
+
+
+@router.post("/register-external")
+async def register_external(req: RegisterExternalRequest):
+    """Скопировать проект из внешней папки в projects/ и зарегистрировать."""
+    try:
+        info = project_service.register_external_project(
+            source_path=req.source_path,
             pdf_file=req.pdf_file,
             md_file=req.md_file,
             name=req.name,

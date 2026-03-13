@@ -17,6 +17,7 @@ from typing import Optional
 from collections import defaultdict
 
 from webapp.models.usage import UsageRecord, UsageCounters, GlobalUsageCounters
+from webapp.services.project_service import resolve_project_dir
 
 # Путь к файлу данных
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -244,6 +245,66 @@ class UsageTracker:
         total_cost = sum(r.get("cost_usd", 0.0) for r in records)
         return total_input, total_output, total_cost, len(records)
 
+    @staticmethod
+    def _dedup_for_duration(records: list[dict]) -> list[dict]:
+        """
+        Дедупликация записей по original stage для подсчёта duration.
+        При retry одного batch (block_batch_019) записывается несколько records.
+        Для duration оставляем только последнюю запись per original stage.
+        """
+        by_stage: dict[str, dict] = {}
+        for r in records:
+            orig_stage = r.get("stage", "?")
+            existing = by_stage.get(orig_stage)
+            if existing is None or r.get("timestamp", "") > existing.get("timestamp", ""):
+                by_stage[orig_stage] = r
+        return list(by_stage.values())
+
+    @staticmethod
+    def _get_pipeline_durations(project_id: str) -> dict[str, int]:
+        """
+        Прочитать pipeline_log.json и вернуть wall-clock duration (ms) по этапам.
+        Ключи приведены к stage-именам usage (block_analysis, findings_merge и т.д.).
+        """
+        log_path = resolve_project_dir(project_id) / "_output" / "pipeline_log.json"
+        if not log_path.exists():
+            return {}
+
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                log = json.load(f)
+        except Exception:
+            return {}
+
+        # Маппинг ключей pipeline_log → ключи usage stages_summary
+        _stage_map = {
+            "crop_blocks": "crop_blocks",
+            "text_analysis": "text_analysis",
+            "block_analysis": "block_analysis",
+            "findings_merge": "findings_merge",
+            "norm_verify": "norm_verify",
+            "norm_fix": "norm_fix",
+            "optimization": "optimization",
+            "excel": "excel",
+        }
+
+        result = {}
+        stages = log.get("stages", {})
+        for log_key, usage_key in _stage_map.items():
+            stage_data = stages.get(log_key, {})
+            started = stage_data.get("started_at")
+            completed = stage_data.get("completed_at")
+            if started and completed:
+                try:
+                    s = datetime.fromisoformat(started)
+                    e = datetime.fromisoformat(completed)
+                    dur_ms = int((e - s).total_seconds() * 1000)
+                    if dur_ms > 0:
+                        result[usage_key] = dur_ms
+                except (ValueError, TypeError):
+                    pass
+        return result
+
     # ── Session Reset ────────────────────────────────────────
 
     def reset_session(self):
@@ -296,10 +357,20 @@ class UsageTracker:
                 stage = _legacy_map.get(stage, stage)
             stages[stage].append(r)
 
+        # Чистое время из pipeline_log (wall-clock: completed_at - started_at)
+        pipeline_durations = self._get_pipeline_durations(project_id)
+
         stages_summary = {}
         for stage, recs in stages.items():
             s_in, s_out, s_cost, s_calls = self._sum_records(recs)
-            s_duration = sum(r.get("duration_ms", 0) for r in recs)
+            # Приоритет: pipeline_log (wall-clock) > дедуплицированный duration_ms
+            if stage in pipeline_durations:
+                s_duration = pipeline_durations[stage]
+            else:
+                deduped = self._dedup_for_duration(recs)
+                non_retry = [r for r in deduped if not r.get("is_retry", False)]
+                dur_recs = non_retry if non_retry else deduped
+                s_duration = sum(r.get("duration_ms", 0) for r in dur_recs)
             stages_summary[stage] = {
                 "input_tokens": s_in,
                 "output_tokens": s_out,
@@ -352,9 +423,18 @@ class UsageTracker:
                     stage = _legacy_map.get(stage, stage)
                 stages[stage].append(r)
 
+            # Чистое время из pipeline_log
+            pipeline_durations = self._get_pipeline_durations(pid)
+
             stages_summary = {}
             for stage, srecs in stages.items():
-                s_dur = sum(r.get("duration_ms", 0) for r in srecs)
+                if stage in pipeline_durations:
+                    s_dur = pipeline_durations[stage]
+                else:
+                    deduped = self._dedup_for_duration(srecs)
+                    non_retry = [r for r in deduped if not r.get("is_retry", False)]
+                    dur_recs = non_retry if non_retry else deduped
+                    s_dur = sum(r.get("duration_ms", 0) for r in dur_recs)
                 s_in, s_out, s_cost, s_calls = self._sum_records(srecs)
                 stages_summary[stage] = {
                     "total_tokens": s_in + s_out,

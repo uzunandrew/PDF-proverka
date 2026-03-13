@@ -32,14 +32,16 @@ FINDINGS_MERGE_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_merge_task.md"
 
 # Скрипты
 PROCESS_PROJECT_SCRIPT = BASE_DIR / "process_project.py"
-CROP_BLOCKS_SCRIPT = BASE_DIR / "crop_blocks.py"
-GENERATE_BLOCK_BATCHES_SCRIPT = BASE_DIR / "generate_block_batches.py"
-MERGE_BLOCK_RESULTS_SCRIPT = BASE_DIR / "merge_block_results.py"
+BLOCKS_SCRIPT = BASE_DIR / "blocks.py"          # субкоманды: crop, batches, merge
+NORMS_SCRIPT = BASE_DIR / "norms.py"             # субкоманды: verify, update
 GENERATE_EXCEL_SCRIPT = BASE_DIR / "generate_excel_report.py"
-VERIFY_NORMS_SCRIPT = BASE_DIR / "verify_norms.py"
-# Legacy aliases (используются в pipeline_service.py)
-GENERATE_BATCHES_SCRIPT = GENERATE_BLOCK_BATCHES_SCRIPT
-MERGE_RESULTS_SCRIPT = MERGE_BLOCK_RESULTS_SCRIPT
+# Legacy aliases (для обратной совместимости)
+CROP_BLOCKS_SCRIPT = BLOCKS_SCRIPT
+GENERATE_BLOCK_BATCHES_SCRIPT = BLOCKS_SCRIPT
+MERGE_BLOCK_RESULTS_SCRIPT = BLOCKS_SCRIPT
+GENERATE_BATCHES_SCRIPT = BLOCKS_SCRIPT
+MERGE_RESULTS_SCRIPT = BLOCKS_SCRIPT
+VERIFY_NORMS_SCRIPT = NORMS_SCRIPT
 DEFAULT_TILE_QUALITY = "standard"
 
 # Legacy aliases for tools (используются в claude_runner.py)
@@ -53,6 +55,9 @@ CLAUDE_BATCH_TIMEOUT = 600
 CLAUDE_AUDIT_TIMEOUT = 3600
 CLAUDE_TRIAGE_TIMEOUT = 300
 CLAUDE_SMART_MERGE_TIMEOUT = 600
+
+# Название объекта (отображается в заголовке дашборда)
+OBJECT_NAME = '213. Мосфильмовская 31А "King&Sons"'
 
 # Порт веб-приложения
 APP_HOST = "0.0.0.0"
@@ -148,7 +153,7 @@ MAX_PARALLEL_BATCHES = 3  # одновременных Claude CLI сессий
 RATE_LIMIT_THRESHOLD_PCT = 90   # при 90% лимита — предварительная проверка перед запуском
 RATE_LIMIT_CHECK_INTERVAL = 60  # сек между проверками во время ожидания
 RATE_LIMIT_MAX_WAIT = 5 * 3600  # макс. ожидание = 5 часов (полное окно)
-RATE_LIMIT_MAX_RETRIES = 3      # макс. повторов одного батча после rate limit
+RATE_LIMIT_MAX_RETRIES = 5      # макс. повторов одного батча после rate limit
 
 # Уровни критичности замечаний (порядок и цвета)
 # ─── Лимиты потребления токенов (Max 20x план, $200/мес) ───

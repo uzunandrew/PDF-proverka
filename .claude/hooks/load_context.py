@@ -27,17 +27,33 @@ def file_size_kb(path):
         return 0
 
 
+def _iter_project_dirs():
+    """Рекурсивно найти все папки проектов (включая подпапки-группы)."""
+    results = []
+    for name in sorted(os.listdir(PROJ_ROOT)):
+        entry = os.path.join(PROJ_ROOT, name)
+        if not os.path.isdir(entry) or name.startswith("_"):
+            continue
+        info = os.path.join(entry, "project_info.json")
+        has_pdf = any(f.endswith(".pdf") for f in os.listdir(entry))
+        if os.path.exists(info) or has_pdf:
+            results.append((name, entry))
+        else:
+            # Подпапка-группа — заходим внутрь
+            for sub in sorted(os.listdir(entry)):
+                sub_path = os.path.join(entry, sub)
+                if os.path.isdir(sub_path) and not sub.startswith("_"):
+                    results.append((sub, sub_path))
+    return results
+
+
 def scan_projects():
     """Scan projects/ folder and return list of project status dicts."""
     if not os.path.isdir(PROJ_ROOT):
         return []
 
     projects = []
-    for name in sorted(os.listdir(PROJ_ROOT)):
-        proj_dir  = os.path.join(PROJ_ROOT, name)
-        if not os.path.isdir(proj_dir):
-            continue
-
+    for name, proj_dir in _iter_project_dirs():
         pdf_path  = os.path.join(proj_dir, "document.pdf")
         info_path = os.path.join(proj_dir, "project_info.json")
         out_dir   = os.path.join(proj_dir, "_output")

@@ -74,7 +74,8 @@ class WSMessage(BaseModel):
         )
 
     @classmethod
-    def complete(cls, project: str, total_findings: int = 0, by_severity: dict = None, duration_minutes: float = 0):
+    def complete(cls, project: str, total_findings: int = 0, by_severity: dict = None,
+                 duration_minutes: float = 0, pause_minutes: float = 0):
         return cls(
             type="complete",
             project=project,
@@ -83,5 +84,6 @@ class WSMessage(BaseModel):
                 "total_findings": total_findings,
                 "by_severity": by_severity or {},
                 "duration_minutes": duration_minutes,
+                "pause_minutes": pause_minutes,
             },
         )

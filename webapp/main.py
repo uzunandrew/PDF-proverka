@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
 # ─── FastAPI App ────────────────────────────────────────────
 app = FastAPI(
     title="Audit Manager",
-    description="Управление аудитом проектов электроснабжения",
+    description="Управление аудитом проектной документации жилых зданий",
     version="1.0.0",
     lifespan=lifespan,
 )

@@ -65,6 +65,8 @@ class ProjectStatus(BaseModel):
     # OCR-данные (result.json от OCR-сервера)
     has_ocr: bool = False
     block_count: int = 0
+    block_errors: int = 0
+    block_expected: int = 0
 
 
 class ProjectCreate(BaseModel):

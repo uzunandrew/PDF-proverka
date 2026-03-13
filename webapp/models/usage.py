@@ -14,8 +14,10 @@ class UsageRecord(BaseModel):
     model: str = ""
     # Из JSON output (мгновенные):
     cost_usd: float = 0.0
-    duration_ms: int = 0
+    duration_ms: int = 0          # полное время сессии (включая паузы)
+    duration_api_ms: int = 0      # чистое время API-вызовов (без пауз)
     num_turns: int = 0
+    is_retry: bool = False        # True = неудачная попытка (rate limit/ошибка), повторялась
     # Из JSONL post-parse (точные, заполняются позже):
     input_tokens: int = 0
     output_tokens: int = 0

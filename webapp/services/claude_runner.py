@@ -20,6 +20,7 @@ from webapp.config import (
 )
 from webapp.services.cli_utils import (
     is_cancelled, is_timeout, is_rate_limited,
+    is_prompt_too_long,
     parse_rate_limit_reset,
     parse_cli_json_output, send_output,
 )
@@ -80,6 +81,7 @@ async def _run_cli(
     on_output: Optional[Callable[[str], Awaitable[None]]] = None,
     include_stderr: bool = True,
     stage: str | None = None,
+    project_id: str | None = None,
 ) -> tuple[int, str, CLIResult]:
     """
     Общий запуск Claude CLI.
@@ -96,6 +98,7 @@ async def _run_cli(
         on_output=None,
         env_overrides={"CLAUDECODE": None},
         timeout=timeout,
+        project_id=project_id,
     )
 
     cli_result = parse_cli_json_output(stdout)
@@ -118,7 +121,7 @@ async def run_norm_verify(
 ) -> tuple[int, str, CLIResult]:
     """Запустить Claude CLI для верификации нормативных ссылок через WebSearch."""
     task_text = prepare_norm_verify_task(norms_list_text, project_id)
-    return await _run_cli(task_text, NORM_VERIFY_TOOLS, CLAUDE_NORM_VERIFY_TIMEOUT, on_output, include_stderr=False, stage="norm_verify")
+    return await _run_cli(task_text, NORM_VERIFY_TOOLS, CLAUDE_NORM_VERIFY_TIMEOUT, on_output, include_stderr=False, stage="norm_verify", project_id=project_id)
 
 
 async def run_norm_fix(
@@ -128,7 +131,7 @@ async def run_norm_fix(
 ) -> tuple[int, str, CLIResult]:
     """Запустить Claude CLI для пересмотра замечаний с учётом актуальных норм."""
     task_text = prepare_norm_fix_task(findings_to_fix_text, project_id)
-    return await _run_cli(task_text, NORM_VERIFY_TOOLS, CLAUDE_NORM_FIX_TIMEOUT, on_output, include_stderr=False, stage="norm_fix")
+    return await _run_cli(task_text, NORM_VERIFY_TOOLS, CLAUDE_NORM_FIX_TIMEOUT, on_output, include_stderr=False, stage="norm_fix", project_id=project_id)
 
 
 # ─── Оптимизация проектных решений ───
@@ -140,7 +143,7 @@ async def run_optimization(
 ) -> tuple[int, str, CLIResult]:
     """Запустить Claude CLI для анализа оптимизации."""
     task_text = prepare_optimization_task(project_info, project_id)
-    return await _run_cli(task_text, TEXT_ANALYSIS_TOOLS, CLAUDE_OPTIMIZATION_TIMEOUT, on_output, stage="optimization")
+    return await _run_cli(task_text, TEXT_ANALYSIS_TOOLS, CLAUDE_OPTIMIZATION_TIMEOUT, on_output, stage="optimization", project_id=project_id)
 
 
 # ─── Анализ текста ───
@@ -152,7 +155,7 @@ async def run_text_analysis(
 ) -> tuple[int, str, CLIResult]:
     """Запустить Claude CLI для текстового анализа MD-файла."""
     task_text = prepare_text_analysis_task(project_info, project_id)
-    return await _run_cli(task_text, TEXT_ANALYSIS_TOOLS, CLAUDE_TEXT_ANALYSIS_TIMEOUT, on_output, stage="text_analysis")
+    return await _run_cli(task_text, TEXT_ANALYSIS_TOOLS, CLAUDE_TEXT_ANALYSIS_TIMEOUT, on_output, stage="text_analysis", project_id=project_id)
 
 
 # ─── Анализ пакета image-блоков ───
@@ -168,7 +171,7 @@ async def run_block_batch(
     task_text = prepare_block_batch_task(
         batch_data, project_info, project_id, total_batches
     )
-    return await _run_cli(task_text, BLOCK_ANALYSIS_TOOLS, CLAUDE_BLOCK_ANALYSIS_TIMEOUT, on_output, stage="block_batch")
+    return await _run_cli(task_text, BLOCK_ANALYSIS_TOOLS, CLAUDE_BLOCK_ANALYSIS_TIMEOUT, on_output, stage="block_batch", project_id=project_id)
 
 
 # ─── Свод замечаний ───
@@ -180,7 +183,7 @@ async def run_findings_merge(
 ) -> tuple[int, str, CLIResult]:
     """Запустить Claude CLI для свода замечаний из текста + блоков."""
     task_text = prepare_findings_merge_task(project_info, project_id)
-    return await _run_cli(task_text, FINDINGS_MERGE_TOOLS, CLAUDE_FINDINGS_MERGE_TIMEOUT, on_output, stage="findings_merge")
+    return await _run_cli(task_text, FINDINGS_MERGE_TOOLS, CLAUDE_FINDINGS_MERGE_TIMEOUT, on_output, stage="findings_merge", project_id=project_id)
 
 
 # ─── Legacy stubs (перенаправляют на блоковый пайплайн) ───

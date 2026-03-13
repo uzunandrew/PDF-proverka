@@ -17,31 +17,62 @@ from webapp.models.project import (
 )
 
 
+def iter_project_dirs() -> list[tuple[str, Path]]:
+    """Рекурсивно найти все папки проектов (включая подпапки-группы).
+
+    Возвращает [(project_id, path), ...] где project_id = имя папки.
+    Проект = папка с project_info.json или PDF-файлами.
+    Подпапка-группа (OV/, EM/ и т.д.) = папка без project_info.json и без PDF.
+    """
+    results: list[tuple[str, Path]] = []
+    if not PROJECTS_DIR.exists():
+        return results
+    for entry in sorted(PROJECTS_DIR.iterdir()):
+        if not entry.is_dir() or entry.name.startswith("_"):
+            continue
+        if (entry / "project_info.json").exists() or list(entry.glob("*.pdf")):
+            results.append((entry.name, entry))
+        else:
+            # Подпапка-группа — заходим внутрь (1 уровень)
+            for sub in sorted(entry.iterdir()):
+                if sub.is_dir() and not sub.name.startswith("_"):
+                    results.append((sub.name, sub))
+    return results
+
+
+def resolve_project_dir(project_id: str) -> Path:
+    """Найти папку проекта по ID (имя папки), с поиском в подпапках."""
+    direct = PROJECTS_DIR / project_id
+    if direct.exists():
+        return direct
+    # Поиск в подпапках (1 уровень)
+    for subdir in PROJECTS_DIR.iterdir():
+        if subdir.is_dir() and not subdir.name.startswith("_"):
+            candidate = subdir / project_id
+            if candidate.exists():
+                return candidate
+    return direct  # fallback
+
+
 def list_projects() -> list[ProjectStatus]:
     """Получить список всех проектов с их статусом."""
     projects = []
-    if not PROJECTS_DIR.exists():
-        return projects
-
-    for entry in sorted(PROJECTS_DIR.iterdir()):
-        if not entry.is_dir():
-            continue
+    for project_id, entry in iter_project_dirs():
         info_path = entry / "project_info.json"
         if not info_path.exists():
-            # Проект без конфигурации — показываем как неподготовленный
             pdf_files = list(entry.glob("*.pdf"))
             if not pdf_files:
-                continue  # Пустая папка — пропускаем
+                continue
             projects.append(ProjectStatus(
-                project_id=entry.name,
-                name=entry.name,
+                project_id=project_id,
+                name=project_id,
                 description="(не подготовлен — нет project_info.json)",
                 has_pdf=True,
                 pdf_size_mb=round(pdf_files[0].stat().st_size / 1024 / 1024, 1),
             ))
             continue
 
-        status = get_project_status(entry.name)
+        status = get_project_status(project_id)
         if status:
             projects.append(status)
 
@@ -50,7 +81,7 @@ def list_projects() -> list[ProjectStatus]:
 
 def get_project_status(project_id: str) -> Optional[ProjectStatus]:
     """Получить полный статус одного проекта."""
-    proj_dir = PROJECTS_DIR / project_id
+    proj_dir = resolve_project_dir(project_id)
     if not proj_dir.exists():
         return None
 
@@ -96,11 +127,15 @@ def get_project_status(project_id: str) -> Optional[ProjectStatus]:
 
     # OCR-блоки (кропнутые image-блоки)
     block_count = 0
+    block_errors = 0
+    block_expected = 0
     blocks_index = output_dir / "blocks" / "index.json"
     if blocks_index.exists():
         bi = _load_json(blocks_index)
         if bi:
             block_count = bi.get("total_blocks", 0)
+            block_errors = bi.get("errors", 0)
+            block_expected = bi.get("total_expected", 0)
 
     # Тайлы
     tiles_dir = output_dir / "tiles"
@@ -187,18 +222,20 @@ def get_project_status(project_id: str) -> Optional[ProjectStatus]:
         completed_batches=completed_batches,
         has_ocr=has_ocr,
         block_count=block_count,
+        block_errors=block_errors,
+        block_expected=block_expected,
     )
 
 
 def get_project_info(project_id: str) -> Optional[dict]:
     """Прочитать raw project_info.json."""
-    path = PROJECTS_DIR / project_id / "project_info.json"
+    path = resolve_project_dir(project_id) / "project_info.json"
     return _load_json(path)
 
 
 def save_project_info(project_id: str, data: dict) -> bool:
     """Сохранить project_info.json."""
-    path = PROJECTS_DIR / project_id / "project_info.json"
+    path = resolve_project_dir(project_id) / "project_info.json"
     try:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -209,7 +246,7 @@ def save_project_info(project_id: str, data: dict) -> bool:
 
 def get_tile_pages(project_id: str) -> list[dict]:
     """Получить список страниц с тайлами."""
-    tiles_dir = PROJECTS_DIR / project_id / "_output" / "tiles"
+    tiles_dir = resolve_project_dir(project_id) / "_output" / "tiles"
     if not tiles_dir.exists():
         return []
 
@@ -251,7 +288,7 @@ def get_tile_pages(project_id: str) -> list[dict]:
 
 def get_tile_path(project_id: str, page_num: str, row: int, col: int) -> Optional[Path]:
     """Получить путь к PNG-файлу тайла."""
-    page_dir = PROJECTS_DIR / project_id / "_output" / "tiles" / f"page_{page_num}"
+    page_dir = resolve_project_dir(project_id) / "_output" / "tiles" / f"page_{page_num}"
     tile_file = page_dir / f"page_{page_num}_r{row}c{col}.png"
     if tile_file.exists():
         return tile_file
@@ -354,33 +391,119 @@ def _load_pipeline_log(output_dir: Path) -> Optional[dict]:
 def scan_unregistered_folders() -> list[dict]:
     """Найти папки в projects/, которые содержат PDF, но не имеют project_info.json."""
     result = []
-    if not PROJECTS_DIR.exists():
-        return result
-
-    for entry in sorted(PROJECTS_DIR.iterdir()):
-        if not entry.is_dir():
-            continue
+    for project_id, entry in iter_project_dirs():
         info_path = entry / "project_info.json"
         if info_path.exists():
-            continue  # Уже зарегистрирован
+            continue
 
-        # Ищем PDF и MD файлы
         pdf_files = list(entry.glob("*.pdf"))
         md_files = list(entry.glob("*_document.md")) + list(entry.glob("*.md"))
-        # Убираем дубликаты (если *_document.md также *.md)
         md_files = list({f.name: f for f in md_files}.values())
 
         if not pdf_files:
-            continue  # Нет PDF — не проект
+            continue
 
         result.append({
-            "folder": entry.name,
+            "folder": project_id,
             "pdf_files": [f.name for f in pdf_files],
             "md_files": [f.name for f in md_files],
             "pdf_size_mb": round(pdf_files[0].stat().st_size / 1024 / 1024, 1),
         })
 
     return result
+
+
+def scan_external_folder(folder_path: str) -> list[dict]:
+    """Сканировать внешнюю папку — найти подпапки с PDF.
+
+    Ищет PDF-файлы в самой папке и в подпапках (1 уровень).
+    """
+    result = []
+    target = Path(folder_path)
+    if not target.exists() or not target.is_dir():
+        return result
+
+    # Собрать кандидатов: сама папка + подпапки
+    candidates = [target]
+    for sub in sorted(target.iterdir()):
+        if sub.is_dir() and not sub.name.startswith("_"):
+            candidates.append(sub)
+
+    for entry in candidates:
+        pdf_files = list(entry.glob("*.pdf"))
+        if not pdf_files:
+            continue
+        md_files = list(entry.glob("*_document.md")) + list(entry.glob("*.md"))
+        md_files = list({f.name: f for f in md_files}.values())
+
+        result.append({
+            "folder": entry.name,
+            "full_path": str(entry),
+            "pdf_files": [f.name for f in pdf_files],
+            "md_files": [f.name for f in md_files],
+            "pdf_size_mb": round(pdf_files[0].stat().st_size / 1024 / 1024, 1),
+        })
+
+    return result
+
+
+def register_external_project(source_path: str, pdf_file: str,
+                              md_file: Optional[str] = None,
+                              name: Optional[str] = None, section: str = "EM",
+                              description: str = "") -> dict:
+    """Скопировать проект из внешней папки в projects/ и создать project_info.json.
+
+    Копирует PDF и MD файлы (не всю папку), создаёт project_info.json.
+    """
+    source = Path(source_path)
+    if not source.exists():
+        raise ValueError(f"Папка '{source_path}' не найдена")
+
+    folder_name = name or source.name
+    dest = PROJECTS_DIR / folder_name
+    if dest.exists() and (dest / "project_info.json").exists():
+        raise ValueError(f"Проект '{folder_name}' уже существует в projects/")
+
+    dest.mkdir(parents=True, exist_ok=True)
+
+    # Копируем PDF
+    src_pdf = source / pdf_file
+    if not src_pdf.exists():
+        raise ValueError(f"PDF файл '{pdf_file}' не найден в '{source_path}'")
+    shutil.copy2(str(src_pdf), str(dest / pdf_file))
+
+    # Копируем MD если есть
+    if md_file:
+        src_md = source / md_file
+        if src_md.exists():
+            shutil.copy2(str(src_md), str(dest / md_file))
+
+    # Копируем *_result.json (нужен для blocks.py crop)
+    for rj in source.glob("*_result.json"):
+        shutil.copy2(str(rj), str(dest / rj.name))
+
+    # Создаём project_info.json
+    project_id = folder_name
+    info = {
+        "project_id": project_id,
+        "name": project_id,
+        "section": section,
+        "description": description,
+        "pdf_file": pdf_file,
+        "source_path": str(source),
+        "tile_config": {},
+    }
+    if md_file:
+        info["md_file"] = md_file
+
+    output_dir = dest / "_output"
+    output_dir.mkdir(exist_ok=True)
+
+    info_path = dest / "project_info.json"
+    with open(info_path, "w", encoding="utf-8") as f:
+        json.dump(info, f, ensure_ascii=False, indent=2)
+
+    return info
 
 
 def register_project(folder: str, pdf_file: str, md_file: Optional[str] = None,
@@ -399,7 +522,7 @@ def register_project(folder: str, pdf_file: str, md_file: Optional[str] = None,
     Returns:
         dict с project_info или raises ValueError
     """
-    proj_dir = PROJECTS_DIR / folder
+    proj_dir = resolve_project_dir(folder)
     if not proj_dir.exists():
         raise ValueError(f"Папка '{folder}' не найдена в projects/")
 
@@ -443,7 +566,7 @@ def get_tile_analysis(project_id: str) -> Optional[dict]:
     Возвращает словарь {tile_name: {label, summary, key_values_read, findings}}
     для быстрого O(1) lookup на фронтенде по имени тайла.
     """
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     if not output_dir.exists():
         return None
 
@@ -481,7 +604,7 @@ def get_page_analysis(project_id: str, page_num: int) -> Optional[dict]:
 
     Приоритет: 02_tiles_analysis.json → fallback на tile_batch_*.json.
     """
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     if not output_dir.exists():
         return None
 
@@ -533,7 +656,7 @@ def get_all_page_summaries(project_id: str) -> Optional[dict]:
 
     Приоритет: 02_tiles_analysis.json → fallback на tile_batch_*.json.
     """
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     if not output_dir.exists():
         return None
 
@@ -635,46 +758,68 @@ def _simple_merge_page_summaries(parts: list, page_num: int) -> dict:
 
 
 def clean_project_data(project_id: str) -> dict:
-    """Очистить все результаты аудита, сохранив PDF, MD и project_info.json.
+    """Очистить все результаты аудита, сохранив только исходные документы.
 
-    Удаляет:
-    - Всю папку _output/ (тайлы, JSON-этапы, батчи, логи, отчёты)
+    Сохраняет (исходные файлы пользователя):
+    - *.pdf
+    - *_document.md (и другие *.md)
+    - *_result.json (OCR-результат для кропа блоков)
+    - *_annotation.json (OCR-аннотации)
+    - *_ocr.html (OCR-визуализация)
+    - project_info.json (сбрасывается до минимума)
 
-    Сбрасывает в project_info.json:
-    - tile_config → {}
-    - tile_config_source, text_source, md_page_classification,
-      text_extraction_quality, tile_quality → удаляются
-
-    Сохраняет:
-    - PDF файл(ы)
-    - MD файл(ы)
-    - project_info.json (минимальная конфигурация)
+    Удаляет всё остальное:
+    - Папку _output/ целиком
+    - client.log, extracted_text.txt и другие генерируемые файлы
 
     Returns:
         dict с описанием удалённого
     """
-    proj_dir = PROJECTS_DIR / project_id
+    proj_dir = resolve_project_dir(project_id)
     if not proj_dir.exists():
         raise ValueError(f"Проект '{project_id}' не найден")
 
     result = {"deleted_files": 0, "deleted_dirs": 0, "freed_mb": 0.0}
+    total_size = 0
 
-    # 1. Удаляем _output/
+    # Исходные файлы — НЕ удаляем
+    def is_source_file(f: Path) -> bool:
+        name = f.name.lower()
+        if name == "project_info.json":
+            return True
+        if name.endswith(".pdf"):
+            return True
+        if name.endswith(".md"):
+            return True
+        if name.endswith("_result.json"):
+            return True
+        if name.endswith("_annotation.json"):
+            return True
+        if name.endswith("_ocr.html"):
+            return True
+        return False
+
+    # 1. Удаляем _output/ целиком
     output_dir = proj_dir / "_output"
     if output_dir.exists():
-        # Подсчитаем размер
-        total_size = 0
         for f in output_dir.rglob("*"):
             if f.is_file():
                 total_size += f.stat().st_size
                 result["deleted_files"] += 1
             elif f.is_dir():
                 result["deleted_dirs"] += 1
-        result["freed_mb"] = round(total_size / 1024 / 1024, 1)
-
         shutil.rmtree(output_dir)
 
-    # 2. Сбрасываем авто-поля в project_info.json
+    # 2. Удаляем все генерируемые файлы в корне проекта
+    for f in proj_dir.iterdir():
+        if f.is_file() and not is_source_file(f):
+            total_size += f.stat().st_size
+            result["deleted_files"] += 1
+            f.unlink()
+
+    result["freed_mb"] = round(total_size / 1024 / 1024, 1)
+
+    # 3. Сбрасываем авто-поля в project_info.json
     info = get_project_info(project_id)
     if info:
         auto_fields = [
@@ -688,7 +833,7 @@ def clean_project_data(project_id: str) -> dict:
         save_project_info(project_id, info)
         result["project_info_reset"] = True
 
-    # 3. Пересоздаём пустую _output/
+    # 4. Пересоздаём пустую _output/
     output_dir.mkdir(exist_ok=True)
 
     return result
@@ -755,7 +900,7 @@ def parse_md_document(project_id: str) -> Optional[dict]:
     if not md_file_name:
         return None
 
-    md_path = PROJECTS_DIR / project_id / md_file_name
+    md_path = resolve_project_dir(project_id) / md_file_name
     if not md_path.exists():
         return None
 

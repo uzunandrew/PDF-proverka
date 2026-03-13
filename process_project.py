@@ -29,12 +29,7 @@ import math
 import re
 import shutil
 
-# Умное извлечение текста с детекцией CAD-шрифтов и OCR-фолбэком
-try:
-    from pdf_text_utils import extract_text_smart, quality_metadata, check_tesseract
-    _HAS_SMART_EXTRACT = True
-except ImportError:
-    _HAS_SMART_EXTRACT = False
+# pdf_text_utils больше не используется — текст берётся из MD-файла (Chandra OCR)
 
 BASE_DIR = r"D:\Отедел Системного Анализа\1. Calude code"
 
@@ -440,42 +435,6 @@ def load_project_info(project_dir):
     }
 
 
-def _extract_text_basic(pdf_path, out_txt):
-    """Базовое извлечение текста (без OCR). Резервный вариант."""
-    print(f"  Extracting text from PDF (basic mode)...")
-    doc = fitz.open(pdf_path)
-    lines = []
-    for i, page in enumerate(doc):
-        lines.append(f"\n{'='*60}")
-        lines.append(f"PAGE {i+1}")
-        lines.append(f"{'='*60}")
-        lines.append(page.get_text())
-    doc.close()
-    with open(out_txt, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    size_kb = os.path.getsize(out_txt) / 1024
-    print(f"  -> {out_txt}  ({size_kb:.0f} KB)")
-    return None  # нет отчёта о качестве
-
-
-def extract_text(pdf_path, out_txt, force_ocr=False, no_ocr=False):
-    """
-    Извлечение текста с интеллектуальным OCR-фолбэком.
-    Если pdf_text_utils доступен → smart-режим (детекция CAD + OCR).
-    Иначе → базовый режим (как раньше).
-    """
-    if _HAS_SMART_EXTRACT:
-        try:
-            report = extract_text_smart(pdf_path, out_txt,
-                                         force_ocr=force_ocr, no_ocr=no_ocr)
-            return report
-        except Exception as e:
-            print(f"  [WARN] Smart extraction failed ({e}), falling back to basic")
-            _extract_text_basic(pdf_path, out_txt)
-            return None
-    else:
-        _extract_text_basic(pdf_path, out_txt)
-        return None
 
 
 def tile_page(doc, page_idx, rows, cols, scale, overlap_pct, label, out_dir):
@@ -564,8 +523,7 @@ def needs_upgrade(project_dir):
     return True  # MD есть, но обработка устаревшая
 
 
-def process(project_dir, full_pages=False, force=False,
-            force_ocr=False, no_ocr=False, quality="standard"):
+def process(project_dir, full_pages=False, force=False, quality="standard"):
     info     = load_project_info(project_dir)
     pdf_name = info.get("pdf_file", "document.pdf")
     pdf_path = os.path.join(project_dir, pdf_name)
@@ -575,7 +533,6 @@ def process(project_dir, full_pages=False, force=False,
         return False
 
     out_dir   = os.path.join(project_dir, "_output")
-    txt_path  = os.path.join(out_dir, "extracted_text.txt")
     tiles_dir = os.path.join(out_dir, "tiles")
     pages_dir = os.path.join(out_dir, "pages_png")
     os.makedirs(out_dir, exist_ok=True)
@@ -589,52 +546,32 @@ def process(project_dir, full_pages=False, force=False,
     md_file, md_size_kb = detect_md_file(project_dir, pdf_name)
     md_pages = None
 
-    if md_file:
-        md_path = os.path.join(project_dir, md_file)
-        info["md_file"] = md_file
-        info["md_file_size_kb"] = md_size_kb
-        print(f"  [MD] Found: {md_file} ({md_size_kb} KB)")
+    if not md_file:
+        print(f"  [ERROR] MD-файл не найден в {project_dir}")
+        print(f"  Анализ без MD-файла не поддерживается.")
+        print(f"  Создайте MD-файл через Chandra OCR и положите в папку проекта.")
+        return False
 
-        # Анализ MD: определяем страницы с графикой
-        md_pages = analyze_md_pages(md_path)
-        image_pages = sorted(p for p, v in md_pages.items() if v["has_image"])
-        text_only   = sorted(p for p, v in md_pages.items() if v["has_text"] and not v["has_image"])
-        print(f"  [MD] Страниц: {len(md_pages)} всего, "
-              f"{len(image_pages)} с графикой, {len(text_only)} чисто текстовых")
+    md_path = os.path.join(project_dir, md_file)
+    info["md_file"] = md_file
+    info["md_file_size_kb"] = md_size_kb
+    print(f"  [MD] Found: {md_file} ({md_size_kb} KB)")
 
-        info["text_source"] = "md"
-        info["md_page_classification"] = {
-            "total_pages": len(md_pages),
-            "image_pages": image_pages,
-            "text_only_pages": text_only,
-        }
-        save_project_info(project_dir, info)
-    elif "md_file" not in info:
-        print(f"  [MD] No MD file found — using PDF text extraction")
+    # Анализ MD: определяем страницы с графикой
+    md_pages = analyze_md_pages(md_path)
+    image_pages = sorted(p for p, v in md_pages.items() if v["has_image"])
+    text_only   = sorted(p for p, v in md_pages.items() if v["has_text"] and not v["has_image"])
+    print(f"  [MD] Страниц: {len(md_pages)} всего, "
+          f"{len(image_pages)} с графикой, {len(text_only)} чисто текстовых")
 
-    # ── Step 1: Extract text ──
-    # Если MD есть — пропускаем (MD = первичный источник текста)
-    # Если MD нет — извлекаем из PDF как раньше
-    quality_report = None
-    if md_file:
-        if force_ocr:
-            # --force-ocr: принудительно создать txt как fallback
-            quality_report = extract_text(pdf_path, txt_path,
-                                           force_ocr=True, no_ocr=no_ocr)
-        else:
-            print(f"  [SKIP] Text extraction — MD file is primary text source")
-    else:
-        if force or not os.path.exists(txt_path):
-            quality_report = extract_text(pdf_path, txt_path,
-                                           force_ocr=force_ocr, no_ocr=no_ocr)
-        else:
-            print(f"  [SKIP] Text already extracted: {txt_path}")
-
-    if quality_report is not None and _HAS_SMART_EXTRACT:
-        info["text_extraction_quality"] = quality_metadata(quality_report)
-        if not md_file:
-            info["text_source"] = "extracted_text"
-        save_project_info(project_dir, info)
+    info["text_source"] = "md"
+    info["md_page_classification"] = {
+        "total_pages": len(md_pages),
+        "image_pages": image_pages,
+        "text_only_pages": text_only,
+    }
+    save_project_info(project_dir, info)
+    print(f"  [OK] MD — первичный источник текста")
 
     # ── Step 2: Configure tiles ──
     tile_cfg = info.get("tile_config", {})
@@ -729,10 +666,6 @@ def main():
                         help="Also render full pages to pages_png/")
     parser.add_argument("--force", action="store_true",
                         help="Re-create even if already exists")
-    parser.add_argument("--no-ocr", action="store_true",
-                        help="Skip OCR even if CAD font corruption detected")
-    parser.add_argument("--force-ocr", action="store_true",
-                        help="Force OCR for ALL pages (for testing)")
     parser.add_argument("--quality", choices=["draft", "standard", "high", "detailed", "speed"],
                         default="speed",
                         help="Tile quality profile: speed (fast, default), draft, standard, high, detailed (max quality)")
@@ -769,12 +702,12 @@ def main():
                     shutil.rmtree(tiles_dir)
                     print(f"  [CLEAN] Удалена папка tiles/ (старые тайлы)")
                 process(project_dir, full_pages=args.full_pages, force=True,
-                        force_ocr=args.force_ocr, no_ocr=args.no_ocr, quality=args.quality)
+                        quality=args.quality)
             else:
                 print(f"  [SKIP] {os.path.basename(project_dir)} — уже актуален (md_analysis или нет MD)")
         else:
             process(project_dir, full_pages=args.full_pages, force=args.force,
-                    force_ocr=args.force_ocr, no_ocr=args.no_ocr, quality=args.quality)
+                    quality=args.quality)
     else:
         # Process all projects in projects/ folder
         projects_root = os.path.join(BASE_DIR, "projects")
@@ -811,7 +744,7 @@ def main():
                         shutil.rmtree(tiles_dir)
                         print(f"  [CLEAN] Удалена папка tiles/")
                     process(project_dir, full_pages=args.full_pages, force=True,
-                            force_ocr=args.force_ocr, no_ocr=args.no_ocr, quality=args.quality)
+                            quality=args.quality)
                     upgraded += 1
                 else:
                     print(f"  [SKIP] {name} — уже актуален")
@@ -823,7 +756,7 @@ def main():
         else:
             for project_dir in projects:
                 process(project_dir, full_pages=args.full_pages, force=args.force,
-                        force_ocr=args.force_ocr, no_ocr=args.no_ocr, quality=args.quality)
+                        quality=args.quality)
 
             print(f"\n{'='*60}")
             print(f"ALL PROJECTS PROCESSED: {len(projects)} total")

@@ -142,7 +142,7 @@ def detect_discipline(folder_name: str, text_sample: str = "") -> str:
 
 
 def get_supported_disciplines() -> list[dict]:
-    """Список поддерживаемых дисциплин для UI."""
+    """Список поддерживаемых дисциплин для UI, отсортированный по order."""
     registry = _load_registry()
     result = []
     for code, disc in registry.get("disciplines", {}).items():
@@ -152,8 +152,10 @@ def get_supported_disciplines() -> list[dict]:
             "name": disc.get("name", code),
             "short_name": disc.get("short_name", code),
             "color": disc.get("color", "#666"),
+            "order": disc.get("order", 999),
             "has_profile": disc_dir.exists(),
         })
+    result.sort(key=lambda d: d["order"])
     return result
 
 
@@ -210,6 +212,75 @@ def _extract_params_json(project_params_md: str) -> str:
     if match:
         return match.group(1).strip()
     return ""
+
+
+def add_discipline(code: str, name: str, color: str = "#666") -> dict:
+    """Добавить пользовательский раздел в _registry.json."""
+    registry = _load_registry()
+    disciplines = registry.setdefault("disciplines", {})
+    if code in disciplines:
+        raise ValueError(f"Раздел с кодом '{code}' уже существует")
+    disciplines[code] = {
+        "name": name,
+        "short_name": name,
+        "color": color,
+        "folder_patterns": [code],
+        "text_keywords": [],
+    }
+    # Сохранить обновлённый реестр
+    DISCIPLINES_DIR.mkdir(parents=True, exist_ok=True)
+    with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+    # Сбросить кэш
+    invalidate_cache()
+    return disciplines[code]
+
+
+def update_discipline(code: str, name: str = None, color: str = None) -> dict:
+    """Обновить параметры раздела в _registry.json."""
+    registry = _load_registry()
+    disciplines = registry.get("disciplines", {})
+    if code not in disciplines:
+        raise ValueError(f"Раздел с кодом '{code}' не найден")
+    if name is not None:
+        disciplines[code]["name"] = name
+        disciplines[code]["short_name"] = name
+    if color is not None:
+        disciplines[code]["color"] = color
+    with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+    invalidate_cache()
+    return disciplines[code]
+
+
+def delete_discipline(code: str):
+    """Удалить раздел из _registry.json."""
+    registry = _load_registry()
+    disciplines = registry.get("disciplines", {})
+    if code not in disciplines:
+        raise ValueError(f"Раздел с кодом '{code}' не найден")
+    del disciplines[code]
+    with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+    invalidate_cache()
+
+
+def reorder_disciplines(ordered_codes: list[str]):
+    """Переупорядочить дисциплины. ordered_codes — коды в нужном порядке."""
+    registry = _load_registry()
+    disciplines = registry.get("disciplines", {})
+    for i, code in enumerate(ordered_codes):
+        if code in disciplines:
+            disciplines[code]["order"] = i
+    # Дисциплины не в списке получают order после всех
+    max_order = len(ordered_codes)
+    for code in disciplines:
+        if code not in ordered_codes:
+            disciplines[code]["order"] = max_order
+            max_order += 1
+    with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+    invalidate_cache()
 
 
 def invalidate_cache():

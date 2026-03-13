@@ -36,6 +36,15 @@ async def get_findings(
     return result.model_dump()
 
 
+@router.get("/{project_id}/block-map")
+async def get_finding_block_map(project_id: str):
+    """Маппинг finding_id → [block_ids] для подсветки блоков при наведении."""
+    result = findings_service.get_finding_block_map(project_id)
+    if result is None:
+        raise HTTPException(404, f"Данные не найдены для '{project_id}'")
+    return result
+
+
 @router.get("/{project_id}/{finding_id}")
 async def get_finding(project_id: str, finding_id: str):
     """Одно замечание по ID."""

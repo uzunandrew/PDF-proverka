@@ -34,6 +34,14 @@ def is_timeout(exit_code: int) -> bool:
     return exit_code == -1
 
 
+def is_prompt_too_long(exit_code: int, stdout: str, stderr: str) -> bool:
+    """Определить, вызвана ли ошибка превышением размера промпта (нерепетируемая)."""
+    if exit_code == 0:
+        return False
+    combined = f"{stdout or ''}\n{stderr or ''}"
+    return bool(re.search(r"prompt is too long", combined, re.IGNORECASE))
+
+
 def is_rate_limited(exit_code: int, stdout: str, stderr: str) -> bool:
     """
     Определить, вызвана ли ошибка исчерпанием rate limit.

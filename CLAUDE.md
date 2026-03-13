@@ -2,30 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# Система аудита проектной документации по электроснабжению
+# Система аудита проектной документации жилых зданий
 
 ## Роль
 
-Ты — эксперт-проектировщик по электроснабжению жилых зданий (ЭОМ/ЭС). Анализируешь документацию, находишь ошибки, даёшь рекомендации — строго с привязкой к нормативной базе РФ.
+Ты — эксперт по проверке проектной документации жилых многоквартирных домов. Анализируешь все разделы проекта, находишь ошибки, даёшь рекомендации — строго с привязкой к нормативной базе РФ.
 
-**Тип объектов:** Жилые и общественные здания (МКД, паркинги)
-**Разделы:** ЭОМ / ЭС / ЭМ
-**Структура:** Мультипроектная — каждый проект в своей папке `projects/<name>/`
+**Тип объектов:** Жилые многоквартирные дома (МКД) и их инфраструктура
+**Разделы:** Все разделы проектной документации (ЭОМ, ОВиК, КР, АР, ВК, СС, БУ и др.)
+**Структура:** Мультипроектная — проекты сгруппированы по дисциплинам: `projects/<КОД>/<имя>/`
 
 ## Быстрый справочник команд
 
 ```bash
-# Подготовка проекта (текст + тайлы)
+# Подготовка проекта (MD обязателен)
 python process_project.py projects/<name>
 
-# Кропинг image-блоков из PDF (по координатам OCR)
-python crop_blocks.py projects/<name>
-
-# Пакетный анализ блоков (100% покрытие)
-python generate_block_batches.py projects/<name>
-# Слияние результатов пакетного анализа
-python merge_block_results.py projects/<name>
-python merge_block_results.py projects/<name> --cleanup
+# Блоки: скачивание по crop_url, пакеты, слияние
+python blocks.py crop projects/<name>
+python blocks.py batches projects/<name>
+python blocks.py merge projects/<name>
+python blocks.py merge projects/<name> --cleanup
 
 # Запрос замечаний
 python query_project.py projects/<name>              # все
@@ -40,9 +37,9 @@ python query_project.py                               # обзор всех пр
 cd webapp && python main.py    # http://localhost:8080
 
 # Нормативная база
-python verify_norms.py projects/<name> --extract-only  # извлечь нормы
-python update_norms_db.py --all                        # обновить кеш из всех проектов
-python update_norms_db.py --stats                      # статистика базы норм
+python norms.py verify projects/<name> --extract-only  # извлечь нормы
+python norms.py update --all                           # обновить кеш из всех проектов
+python norms.py update --stats                         # статистика базы норм
 
 # Excel-отчёт по всем проектам
 python generate_excel_report.py
@@ -93,7 +90,6 @@ pip install -r webapp/requirements.txt
 ├── norms_reference.md                ← нормативная база РФ
 ├── norms_db.json                     ← кеш проверок норм (176+ документов)
 ├── norms_paragraphs.json             ← проверенные цитаты конкретных пунктов норм
-├── schemas/                          ← JSON-схемы этапов конвейера
 └── .claude/
     ├── text_analysis_task.md         ← этап 01: анализ текста из MD
     ├── block_analysis_task.md        ← этап 02: анализ image-блоков
@@ -109,14 +105,9 @@ pip install -r webapp/requirements.txt
 
 | Файл | Назначение |
 |------|-----------|
-| `process_project.py` | Подготовка: извлечение текста + авто-нарезка тайлов |
-| `pdf_text_utils.py` | Детекция порчи CAD-шрифтов + OCR-фолбэк |
-| `crop_blocks.py` | Кропинг image-блоков из PDF по координатам OCR |
-| `generate_block_batches.py` | Группировка блоков в пакеты (~8 шт, по страницам) |
-| `merge_block_results.py` | Слияние `block_batch_*.json` → `02_blocks_analysis.json` |
-| `verify_norms.py` | Извлечение нормативных ссылок из findings + подготовка для верификации |
-| `update_norms_db.py` | Обновление `norms_db.json` + `norms_paragraphs.json` из результатов верификации |
-| `update_stage01.py` | Обновление `01_text_analysis.json` (приоритизация блоков) |
+| `process_project.py` | Подготовка: проверка MD-файла, извлечение метаданных |
+| `blocks.py` | Блоки: `crop` (скачивание по crop_url), `batches` (группировка), `merge` (слияние) |
+| `norms.py` | Нормы: `verify` (извлечение ссылок), `update` (обновление norms_db.json) |
 | `query_project.py` | Быстрый поиск по JSON-конвейеру |
 | `generate_excel_report.py` | Excel-сводка всех проектов |
 
@@ -124,35 +115,13 @@ pip install -r webapp/requirements.txt
 
 FastAPI на порту 8080. Запуск: `cd webapp && python main.py`
 
-```
-webapp/
-├── main.py              ← uvicorn точка входа
-├── config.py            ← пути, таймауты, настройки Claude CLI
-├── routers/             ← REST API
-│   ├── projects.py      ← /api/projects/* — список, статус
-│   ├── audit.py         ← /api/audit/* — запуск full+smart аудита
-│   ├── findings.py      ← /api/findings/* — фильтры замечаний
-│   ├── tiles.py         ← /api/tiles/* — просмотр PNG/блоков
-│   ├── export.py        ← /api/export/* — Excel, CSV, Markdown
-│   ├── usage.py         ← /api/usage/* — счётчики токенов (сессия, 5ч, неделя)
-│   └── optimization.py  ← /api/optimization/* — сценарии оптимизации
-├── services/            ← бизнес-логика
-│   ├── pipeline_service.py  ← оркестрация аудита (PipelineManager, AuditJob)
-│   ├── claude_runner.py     ← запуск Claude CLI (wrapper)
-│   ├── task_builder.py      ← формирование промптов из .claude/*_task.md
-│   ├── cli_utils.py         ← парсинг JSON-вывода CLI, детекция rate limit
-│   ├── project_service.py   ← работа с проектами
-│   ├── findings_service.py  ← слияние findings
-│   ├── process_runner.py    ← async subprocess для Python-скриптов
-│   ├── usage_service.py     ← два трекера токенов (см. ниже)
-│   ├── discipline_service.py← загрузка профилей дисциплин (EM, OV)
-│   ├── resume_detector.py   ← детекция прерванного этапа для возобновления
-│   ├── audit_logger.py      ← логирование событий аудита в файл
-│   └── excel_service.py     ← генерация Excel
-├── models/              ← Pydantic-модели (project, audit, findings, usage, websocket)
-├── ws/manager.py        ← WebSocket live-лог (/ws/audit/{project_id})
-└── data/                ← runtime-данные (usage_data.json и т.д.)
-```
+Структура: `main.py` (uvicorn) → `routers/` (REST API по `/api/*`) → `services/` (бизнес-логика) → `models/` (Pydantic).
+
+Ключевые сервисы:
+- `pipeline_service.py` — оркестрация аудита (PipelineManager, AuditJob)
+- `claude_runner.py` → `task_builder.py` → `cli_utils.py` — запуск Claude CLI, формирование промптов, парсинг вывода
+- `usage_service.py` — два трекера токенов (см. ниже)
+- `ws/manager.py` — WebSocket live-лог (`/ws/audit/{project_id}`)
 
 **Ключевые параметры:** таймаут пакета 600с, аудита 3600с, до 3 параллельных Claude-сессий.
 
@@ -180,9 +149,7 @@ webapp/
 ```
 disciplines/
 ├── _registry.json           ← реестр всех дисциплин (ID, цвета, ключевые слова)
-├── _common/
-│   └── severity_levels.md   ← уровни критичности (КРИТИЧЕСКОЕ и т.д.)
-├── EM/                      ← Электроснабжение (ЭОМ/ЭС/ЭМ)
+├── EM/                      ← Электроснабжение (ЭОМ/ЭС/ЭМ) — первая дисциплина
 │   ├── config.json          ← конфигурация дисциплины
 │   ├── role.md              ← роль Claude как эксперта
 │   ├── norms_reference.md   ← нормативная база по электрике
@@ -202,20 +169,6 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
 - `index.html` — шаблоны Vue (v-if/v-for), Google Fonts, CSS через `?v=N` для cache bust
 - `js/app.js` — вся логика: маршрутизация (dashboard/project/findings/tiles/blocks), API-вызовы, WebSocket, polling
 - `css/styles.css` — тема "Industrial Blueprint" (тёмная, cyan/indigo акценты)
-
-**Ключевые функции в app.js:**
-- `stepClass(step)` — возвращает CSS-класс для pipeline-индикатора (`step-done`, `step-error`, `step-running`...)
-- `pollGlobalUsage()` — опрос `/api/usage/global` каждые 60 сек
-- `fetchAllProjectUsage()` — загрузка per-project токенов для карточек
-- `stageTokens(key)` — маппинг pipeline key → stage key в usage data
-- `stageDurationForProject(projectId, key)` — время выполнения этапа (из usage)
-- `formatDuration(ms)` — форматирование длительности (5м32с, 1ч12м)
-- `optTypeLabel(type)` / `optTypeColor(type)` — метки и цвета типов оптимизации
-
-**Дашборд — карточки проектов показывают:**
-- Pipeline-кружки (01–05+OPT) с временем выполнения под каждым шагом
-- Severity-бейджи (цветные счётчики замечаний по критичности)
-- Optimization-бейджи (цветные счётчики по типам: cheaper_analog, faster_install, simpler_design, lifecycle)
 
 **При изменении CSS:** bump версию `?v=N` в `<link>` тег в index.html.
 **При изменении JS-классов:** CSS должен поддерживать обе формы (`.done` и `.step-done`).
@@ -239,7 +192,7 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
   ↓  Приоритизация image-блоков (HIGH/MEDIUM/LOW/SKIP)
   ↓
 [02] Кропинг + анализ блоков → 02_blocks_analysis.json
-  ↓  crop_blocks.py → generate_block_batches.py → N Claude-сессий → merge_block_results.py
+  ↓  blocks.py crop → blocks.py batches → N Claude-сессий → blocks.py merge
   ↓  Каждый блок — законченный фрагмент чертежа (не тайл-сетка)
   ↓  Сверка значений на чертеже с project_params из этапа 01
   ↓
@@ -251,7 +204,7 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
 ### Пакетный анализ блоков
 
 ```
-crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_batches.json → N Claude-сессий → merge_block_results.py → 02_blocks_analysis.json
+blocks.py crop → blocks/ + index.json → blocks.py batches → block_batches.json → N Claude-сессий → blocks.py merge → 02_blocks_analysis.json
 ```
 
 **Правило:** основная сессия аудита читает готовый `02_blocks_analysis.json`, а НЕ блоки напрямую.
@@ -265,10 +218,6 @@ crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_
 | Нормативные ссылки | `01_text_analysis.json` → `normative_refs_found` |
 | `03_findings.json` не найден | Сообщить что аудит не завершён |
 
-### JSON-схемы
-
-В папке `schemas/`: `stage_01_text.schema.json`, `stage_02_blocks.schema.json`, `stage_03_findings.schema.json`.
-
 ## Приоритет источников данных
 
 ```
@@ -278,7 +227,7 @@ crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_
 ```
 
 **MD-файл** (`*_document.md`) — первичный источник текста. Содержит `[TEXT]` и `[IMAGE]` блоки.
-`crop_blocks.py` кропает image-блоки из PDF по координатам из `*_result.json` (OCR).
+`blocks.py crop` скачивает image-блоки по crop_url из `*_result.json` (OCR).
 
 При расхождении MD и блока → фиксируй: `"В MD: XXX / В PDF: YYY / Принято: YYY (по PDF)"`
 
@@ -303,7 +252,7 @@ crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_
 | Информационная плотность | Низкая | Высокая |
 | Контекст | Фрагмент сетки | Целый чертёж |
 
-### Параметры кропинга (`crop_blocks.py`)
+### Параметры кропинга (`blocks.py crop`)
 
 - `TARGET_LONG_SIDE_PX = 1500` — оптимальный размер для Claude
 - `MIN_BLOCK_AREA_PX2 = 50000` — фильтр мелких блоков и штампов
@@ -312,8 +261,8 @@ crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_
 ### Инициализация блоков
 
 1. Проверь `projects/<name>/_output/blocks/*.png` и `index.json`
-2. Если блоков нет → `python crop_blocks.py projects/<name>`
-3. Скрипт кропает все image-блоки из `*_result.json`
+2. Если блоков нет → `python blocks.py crop projects/<name>`
+3. Скрипт скачивает image-блоки по crop_url из `*_result.json`
 
 ### Структура блоков
 
@@ -325,7 +274,7 @@ crop_blocks.py → blocks/ + index.json → generate_block_batches.py → block_
 
 ### Обработка CAD-шрифтов
 
-PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестандартным Unicode → `pdf_text_utils.py` детектирует порчу и запускает OCR. Маркеры в `extracted_text.txt`: `[OCR]` (распознано), `[CAD_FONT_CORRUPTED]` (полагаться на блоки).
+PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестандартным Unicode. Текст берётся из MD-файла (Chandra OCR), fallback на PDF-текст не поддерживается.
 
 ## Как добавить новый проект
 
@@ -342,8 +291,8 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 }
 ```
 4. Запустить `python process_project.py projects/<НомерПроекта>`
-5. Запустить `python crop_blocks.py projects/<НомерПроекта>`
-6. Скрипт извлечёт текст, crop_blocks кропает image-блоки из PDF
+5. Запустить `python blocks.py crop projects/<НомерПроекта>`
+6. Скрипт скачает image-блоки по crop_url из result.json
 
 ## Нормативная база — критические правила
 
@@ -384,7 +333,7 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 
 Уровень 3: norms_paragraphs.json (накопительный кеш)
   ↓ Подтверждённые цитаты сохраняются для будущих аудитов
-  ↓ update_norms_db.py автоматически пополняет из paragraph_checks
+  ↓ norms.py update автоматически пополняет из paragraph_checks
 ```
 
 **Ключевые файлы:**
@@ -423,25 +372,22 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 **Рекомендация:** ...
 ```
 
-## Области проверки проекта ЭОМ
+## Поддерживаемые разделы проектной документации
 
-1. **Электроснабжение** — категория надёжности, схема, расчёт нагрузок (СП 256, табл. 7.1), трансформаторы
-2. **Распределительные сети** — кабели, прокладка, защитные аппараты, селективность
-3. **Групповые сети квартир** — линии, сечения, УЗО (30/10 мА), УЗДП (СП 256, прил. В)
-4. **Освещение** — нормы (СП 52.13330), аварийное/эвакуационное
-5. **Заземление** — TN-C-S / TN-S, ОСУП, ДСУП, молниезащита
-6. **Слаботочные** — связь, домофон, ТВ, АСКУЭ
-7. **Пожарная безопасность** — кабели НПО, питание СПЗ (СП 6.13130), огнестойкость
+Система поддерживает аудит всех разделов проекта МКД. Конкретные чек-листы, нормативная база и категории замечаний загружаются из профиля дисциплины (`disciplines/<CODE>/`).
 
-### Чек-лист по типам чертежей
+| Код | Раздел | Статус |
+|-----|--------|--------|
+| EM | Электроснабжение и электрооборудование (ЭОМ/ЭС/ЭМ) | Готов |
+| OV | Отопление, вентиляция, кондиционирование (ОВиК) | Готов |
+| KR | Конструктивные решения (КР/КЖ/КМ) | Планируется |
+| AR | Архитектурные решения (АР) | Планируется |
+| VK | Водоснабжение и канализация (ВК) | Планируется |
+| SS | Слаботочные системы (СС) | Планируется |
+| BU | Благоустройство (БУ/ГП) | Планируется |
+| PB | Пожарная безопасность (ПБ/АУПТ/АУПС) | Планируется |
 
-**Однолинейная схема:** номиналы АВ, УЗО/УЗДП, ТТ, АВР, учёт, соответствие кабелей спецификации.
-
-**Схемы щитов:** совпадение групп со спецификацией, сечения, дубли групп, PE-шина.
-
-**Планы:** цвета кабелей (норм./ОКЛ), щиты = спецификация, трассы ОКЛ, расположение ЩУ-ЗС.
-
-**Узел ввода:** прокладка кабелей, защита от повреждений, сечения вводных кабелей.
+Дисциплина проекта определяется автоматически по полю `section` в `project_info.json` или по ключевым словам в имени папки (см. `_registry.json`).
 
 ## Автономный режим работы
 
@@ -456,20 +402,18 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 | Расхождение MD/PDF | Принимай PDF, фиксируй |
 | Не уверен в норме | Проверяй через WebSearch |
 | Нашёл замечание | Включай в отчёт |
-| Блоков нет | Запусти `crop_blocks.py` |
+| Блоков нет | Запусти `blocks.py crop` |
 
 ### Порядок инициализации сеанса
 
 1. Определить источник текста (`text_source` в `project_info.json`)
-2. Проверить наличие блоков (`_output/blocks/`) — если нет, запустить `crop_blocks.py`
+2. Проверить наличие блоков (`_output/blocks/`) — если нет, запустить `blocks.py crop`
 3. При наличии MD — сверять графику на блоках с `[IMAGE]` описаниями
 4. Прочитать нормативную базу дисциплины для актуальных норм
 
 ## Legacy-код (не удалять, но не развивать)
 
-- `generate_tile_batches.py`, `merge_tile_results.py` — старый тайловый метод (заменён блоками)
 - `claude_runner.py`: `run_tile_batch`, `run_main_audit`, `run_triage`, `run_smart_merge` — стабы, перенаправляют на блоковые функции
-- `write_batch*.py` — тестовые скрипты для отладки пакетных результатов
 
 ## Запрещённые действия
 

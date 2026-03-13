@@ -8,8 +8,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from webapp.services.pipeline_service import pipeline_manager
 from webapp.services import project_service
+from webapp.services.project_service import resolve_project_dir
 from webapp.config import (
-    get_claude_model, set_claude_model, CLAUDE_MODEL_OPTIONS, PROJECTS_DIR,
+    get_claude_model, set_claude_model, CLAUDE_MODEL_OPTIONS,
     get_stage_models, set_stage_model, get_model_for_stage,
 )
 
@@ -119,6 +120,31 @@ async def get_batch_status():
     return {"active": True, "queue": queue.model_dump()}
 
 
+@router.post("/batch/add")
+async def add_to_batch(request: dict):
+    """Добавить проекты в работающую batch-очередь."""
+    project_ids = request.get("project_ids", [])
+    action = request.get("action")  # None = использовать action очереди
+
+    if not project_ids:
+        raise HTTPException(400, "Список проектов пуст")
+
+    valid_ids = []
+    for pid in project_ids:
+        status = project_service.get_project_status(pid)
+        if status and status.has_pdf:
+            valid_ids.append(pid)
+
+    if not valid_ids:
+        raise HTTPException(400, "Нет валидных проектов для добавления")
+
+    try:
+        queue = await pipeline_manager.add_to_batch(valid_ids, action)
+        return {"status": "added", "added": len(valid_ids), "queue": queue.model_dump()}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
 @router.delete("/batch/cancel")
 async def cancel_batch():
     """Отменить текущую batch-очередь."""
@@ -181,31 +207,27 @@ async def get_all_live_status():
 
     # Также отдаём актуальные completed_batches для всех проектов
     batches_info = {}
-    if PROJECTS_DIR.exists():
-        for entry in PROJECTS_DIR.iterdir():
-            if not entry.is_dir():
-                continue
-            output_dir = entry / "_output"
-            # Приоритет: block_batches.json → tile_batches.json (legacy)
-            batches_file = output_dir / "block_batches.json"
-            batch_prefix = "block_batch"
-            if not batches_file.exists():
-                batches_file = output_dir / "tile_batches.json"
-                batch_prefix = "tile_batch"
-            if not batches_file.exists():
-                continue
-            try:
-                with open(batches_file, "r", encoding="utf-8") as f:
-                    bd = json.load(f)
-                total = bd.get("total_batches", len(bd.get("batches", [])))
-                completed = 0
-                for i in range(1, total + 1):
-                    bf = output_dir / f"{batch_prefix}_{i:03d}.json"
-                    if bf.exists() and bf.stat().st_size > 100:
-                        completed += 1
-                batches_info[entry.name] = {"total": total, "completed": completed}
-            except Exception:
-                pass
+    for pid, entry in project_service.iter_project_dirs():
+        output_dir = entry / "_output"
+        batches_file = output_dir / "block_batches.json"
+        batch_prefix = "block_batch"
+        if not batches_file.exists():
+            batches_file = output_dir / "tile_batches.json"
+            batch_prefix = "tile_batch"
+        if not batches_file.exists():
+            continue
+        try:
+            with open(batches_file, "r", encoding="utf-8") as f:
+                bd = json.load(f)
+            total = bd.get("total_batches", len(bd.get("batches", [])))
+            completed = 0
+            for i in range(1, total + 1):
+                bf = output_dir / f"{batch_prefix}_{i:03d}.json"
+                if bf.exists() and bf.stat().st_size > 100:
+                    completed += 1
+            batches_info[pid] = {"total": total, "completed": completed}
+        except Exception:
+            pass
 
     # Данные о потреблении токенов
     from webapp.services.usage_service import usage_tracker
@@ -222,7 +244,7 @@ async def get_all_live_status():
 @router.get("/{project_id}/log")
 async def get_project_log(project_id: str, limit: int = 500, offset: int = 0):
     """Получить персистентный лог аудита из audit_log.jsonl."""
-    log_path = PROJECTS_DIR / project_id / "_output" / "audit_log.jsonl"
+    log_path = resolve_project_dir(project_id) / "_output" / "audit_log.jsonl"
     if not log_path.exists():
         return {"entries": [], "total": 0, "has_more": False}
 
@@ -256,7 +278,7 @@ async def get_project_log(project_id: str, limit: int = 500, offset: int = 0):
 @router.delete("/{project_id}/log")
 async def clear_project_log(project_id: str):
     """Очистить лог аудита проекта."""
-    log_path = PROJECTS_DIR / project_id / "_output" / "audit_log.jsonl"
+    log_path = resolve_project_dir(project_id) / "_output" / "audit_log.jsonl"
     if log_path.exists():
         log_path.unlink()
     return {"status": "ok"}
@@ -345,26 +367,25 @@ async def start_smart_audit(project_id: str):
         raise HTTPException(409, str(e))
 
 
-@router.post("/{project_id}/standard-audit")
-async def start_standard_audit(project_id: str):
-    """Стандартный аудит (OCR): кроп блоков → текст → выборочные блоки → свод."""
+@router.post("/{project_id}/full-audit")
+async def start_audit(project_id: str):
+    """Аудит (OCR): кроп блоков → текст → все блоки → свод → нормы."""
     _check_project(project_id)
     try:
-        job = await pipeline_manager.start_standard_audit(project_id)
-        return {"status": "started", "mode": "standard", "job": job.model_dump()}
+        job = await pipeline_manager.start_audit(project_id)
+        return {"status": "started", "job": job.model_dump()}
     except RuntimeError as e:
         raise HTTPException(409, str(e))
 
+
+# Legacy aliases
+@router.post("/{project_id}/standard-audit")
+async def start_standard_audit(project_id: str):
+    return await start_audit(project_id)
 
 @router.post("/{project_id}/pro-audit")
 async def start_pro_audit(project_id: str):
-    """PRO аудит (OCR): кроп блоков → текст → ВСЕ блоки → свод."""
-    _check_project(project_id)
-    try:
-        job = await pipeline_manager.start_pro_audit(project_id)
-        return {"status": "started", "mode": "pro", "job": job.model_dump()}
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
+    return await start_audit(project_id)
 
 
 @router.get("/{project_id}/resume-info")
@@ -381,6 +402,17 @@ async def resume_pipeline(project_id: str):
     _check_project(project_id)
     try:
         job = await pipeline_manager.resume_pipeline(project_id)
+        return {"status": "started", "job": job.model_dump()}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/{project_id}/start-from")
+async def start_from_stage(project_id: str, stage: str = Query(..., description="Этап: prepare, text_analysis, block_analysis, findings_merge, norm_verify, excel")):
+    """Запустить конвейер с указанного этапа (все последующие пересчитываются)."""
+    _check_project(project_id)
+    try:
+        job = await pipeline_manager.start_from_stage(project_id, stage)
         return {"status": "started", "job": job.model_dump()}
     except RuntimeError as e:
         raise HTTPException(409, str(e))
@@ -416,15 +448,16 @@ async def retry_stage(project_id: str, stage: str):
     _check_project(project_id)
 
     stage_methods = {
-        "crop_blocks": lambda: pipeline_manager.start_standard_audit(project_id),
-        "text_analysis": lambda: pipeline_manager.start_standard_audit(project_id),
-        "block_analysis": lambda: pipeline_manager.start_standard_audit(project_id),
-        "findings_merge": lambda: pipeline_manager.start_standard_audit(project_id),
+        "crop_blocks": lambda: pipeline_manager.start_from_stage(project_id, "prepare"),
+        "text_analysis": lambda: pipeline_manager.start_from_stage(project_id, "text_analysis"),
+        "block_analysis": lambda: pipeline_manager.start_from_stage(project_id, "block_analysis"),
+        "findings_merge": lambda: pipeline_manager.start_from_stage(project_id, "findings_merge"),
         "norm_verify": lambda: pipeline_manager.start_norm_verify(project_id),
+        "optimization": lambda: pipeline_manager.start_optimization(project_id),
         # Legacy aliases
-        "prepare": lambda: pipeline_manager.start_standard_audit(project_id),
-        "tile_audit": lambda: pipeline_manager.start_standard_audit(project_id),
-        "main_audit": lambda: pipeline_manager.start_standard_audit(project_id),
+        "prepare": lambda: pipeline_manager.start_from_stage(project_id, "prepare"),
+        "tile_audit": lambda: pipeline_manager.start_from_stage(project_id, "block_analysis"),
+        "main_audit": lambda: pipeline_manager.start_from_stage(project_id, "findings_merge"),
     }
 
     starter = stage_methods.get(stage)

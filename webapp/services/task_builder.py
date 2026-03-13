@@ -16,12 +16,13 @@ from webapp.config import (
 )
 from webapp.services.cli_utils import load_template
 from webapp.services import discipline_service
+from webapp.services.project_service import resolve_project_dir
 
 
 # ─── Prompt Overrides ───
 
 def _overrides_path(project_id: str) -> Path:
-    return PROJECTS_DIR / project_id / "_output" / "prompt_overrides.json"
+    return resolve_project_dir(project_id) / "_output" / "prompt_overrides.json"
 
 
 def _load_all_overrides(project_id: str) -> dict:
@@ -55,7 +56,7 @@ def save_prompt_override(project_id: str, stage: str, content: str | None):
 
 def _load_project_info(project_id: str) -> dict:
     """Загрузить project_info.json."""
-    info_path = PROJECTS_DIR / project_id / "project_info.json"
+    info_path = resolve_project_dir(project_id) / "project_info.json"
     if info_path.exists():
         try:
             return json.loads(info_path.read_text(encoding="utf-8"))
@@ -152,7 +153,7 @@ def save_template(stage: str, content: str):
 
 def _get_block_analysis_example(project_info: dict, project_id: str) -> str:
     """Пример промпта для анализа блоков (первый пакет или шаблон)."""
-    batches_file = PROJECTS_DIR / project_id / "_output" / "block_batches.json"
+    batches_file = resolve_project_dir(project_id) / "_output" / "block_batches.json"
     if batches_file.exists():
         try:
             data = json.loads(batches_file.read_text(encoding="utf-8"))
@@ -180,15 +181,15 @@ def _get_md_file_path(project_info: dict, project_id: str) -> str:
     """Получить путь к MD-файлу проекта."""
     md_file = project_info.get("md_file")
     if md_file:
-        return str(PROJECTS_DIR / project_id / md_file)
+        return str(resolve_project_dir(project_id) / md_file)
     return "(нет)"
 
 
 def _get_project_paths(project_id: str) -> tuple[str, str]:
     """Получить пути к проекту и выходной папке."""
     return (
-        str(PROJECTS_DIR / project_id),
-        str(PROJECTS_DIR / project_id / "_output"),
+        str(resolve_project_dir(project_id)),
+        str(resolve_project_dir(project_id) / "_output"),
     )
 
 
@@ -281,13 +282,22 @@ def prepare_text_analysis_task(
     return task
 
 
-# ─── Извлечение [IMAGE] контекста из MD ───
+# ─── Извлечение контекста страниц из MD ───
 
-def _extract_image_context_for_blocks(md_file_path: str, block_ids: list[str]) -> str:
-    """Извлечь из MD-файла секции [IMAGE] только для указанных block_id.
+def _extract_page_context_for_blocks(
+    md_file_path: str,
+    block_ids: list[str],
+    block_pages: list[int],
+) -> str:
+    """Извлечь из MD-файла полный контекст страниц для блоков пакета.
 
-    Вместо того чтобы Claude CLI читал весь MD (100-500 KB),
-    мы извлекаем только релевантные секции (~2-5 KB на пакет).
+    Для каждой страницы, на которой есть блоки пакета, извлекает:
+    1. Метаданные страницы (лист, наименование листа)
+    2. Все [TEXT] блоки (текст, таблицы, примечания)
+    3. [IMAGE] описания только для блоков этого пакета
+
+    Это даёт Claude полный контекст: что написано рядом с чертежом.
+    Типичный объём: 3-10 KB на пакет (vs 100-500 KB за весь MD).
     """
     md_path = Path(md_file_path)
     if not md_path.exists() or md_file_path == "(нет)":
@@ -299,57 +309,142 @@ def _extract_image_context_for_blocks(md_file_path: str, block_ids: list[str]) -
         return ""
 
     block_ids_set = set(block_ids)
-    if not block_ids_set:
+    target_pages = set(block_pages)
+    if not block_ids_set and not target_pages:
         return ""
 
-    # Парсим MD: ищем блоки ### BLOCK [IMAGE]: <block_id>
-    # Каждый блок заканчивается перед следующим ### BLOCK или ## СТРАНИЦА
-    sections = []
-    current_page_header = ""
+    # Парсим MD постранично
+    # Структура: ## СТРАНИЦА N → метаданные → ### BLOCK [TEXT/IMAGE]: ID
+    pages: dict[int, dict] = {}  # page_num → {meta, texts, images}
+    current_page_num = 0
+    current_page_relevant = False
+    current_block_type = None  # "text" | "image" | None
+    current_block_id = ""
+    current_block_lines: list[str] = []
+    current_block_relevant = False  # для IMAGE — только если block_id в пакете
+
+    def _flush_block():
+        """Сохранить накопленный блок в структуру страницы."""
+        nonlocal current_block_type, current_block_lines, current_block_relevant
+        if not current_block_type or current_page_num not in pages:
+            current_block_type = None
+            current_block_lines = []
+            return
+
+        text = "\n".join(current_block_lines).strip()
+        if not text:
+            current_block_type = None
+            current_block_lines = []
+            return
+
+        page = pages[current_page_num]
+        if current_block_type == "text":
+            # Пропускаем блоки с ошибками и пустые
+            if "[Ошибка" not in text and "*(нет данных)*" not in text:
+                page["texts"].append(text)
+        elif current_block_type == "image" and current_block_relevant:
+            page["images"].append(text)
+
+        current_block_type = None
+        current_block_lines = []
+        current_block_relevant = False
 
     for line in content.split("\n"):
-        # Трекинг текущей страницы
+        # Начало новой страницы
         if line.startswith("## СТРАНИЦА "):
-            current_page_header = line
+            _flush_block()
+            try:
+                current_page_num = int(line.split("СТРАНИЦА")[1].strip())
+            except (ValueError, IndexError):
+                current_page_num = 0
+            current_page_relevant = current_page_num in target_pages
+            if current_page_relevant and current_page_num not in pages:
+                pages[current_page_num] = {
+                    "num": current_page_num,
+                    "meta": [],
+                    "texts": [],
+                    "images": [],
+                }
+            continue
+
+        if not current_page_relevant:
+            continue
+
+        # Метаданные страницы (Лист, Наименование листа)
+        if line.startswith("**Лист:**") or line.startswith("**Наименование листа:**"):
+            if current_page_num in pages:
+                pages[current_page_num]["meta"].append(line)
+            continue
+
+        # Начало TEXT-блока
+        if line.startswith("### BLOCK [TEXT]:"):
+            _flush_block()
+            current_block_type = "text"
+            current_block_id = line.split(":", 1)[-1].strip()
+            current_block_lines = []
             continue
 
         # Начало IMAGE-блока
         if line.startswith("### BLOCK [IMAGE]:"):
-            # Извлекаем block_id
+            _flush_block()
             bid = line.split(":", 1)[-1].strip()
-            if bid in block_ids_set:
-                sections.append({
-                    "block_id": bid,
-                    "page_header": current_page_header,
-                    "lines": [line],
-                    "active": True,
-                })
+            current_block_type = "image"
+            current_block_id = bid
+            current_block_relevant = bid in block_ids_set
+            current_block_lines = [line]
             continue
 
-        # Начало другого блока — закрываем активный
-        if line.startswith("### BLOCK ") or line.startswith("## СТРАНИЦА "):
-            for s in sections:
-                s["active"] = False
-            if line.startswith("## СТРАНИЦА "):
-                current_page_header = line
+        # Начало неизвестного блока — закрываем текущий
+        if line.startswith("### BLOCK "):
+            _flush_block()
             continue
 
-        # Добавляем строки к активным секциям
-        for s in sections:
-            if s.get("active"):
-                s["lines"].append(line)
+        # Накапливаем строки текущего блока
+        if current_block_type:
+            current_block_lines.append(line)
 
-    if not sections:
+    _flush_block()  # последний блок
+
+    if not pages:
         return ""
 
-    # Формируем компактный контекст
+    # Формируем контекст: по страницам, в порядке возрастания
     parts = []
-    for s in sections:
-        text = "\n".join(s["lines"]).strip()
-        if text:
-            parts.append(text)
+    for page_num in sorted(pages):
+        page = pages[page_num]
+        section_lines = [f"## СТРАНИЦА {page_num}"]
 
-    return "\n\n".join(parts)
+        # Метаданные
+        for m in page["meta"]:
+            section_lines.append(m)
+
+        # Текстовые блоки
+        if page["texts"]:
+            section_lines.append("")
+            section_lines.append("### Текст на странице:")
+            for t in page["texts"]:
+                section_lines.append(t)
+                section_lines.append("")
+
+        # IMAGE описания (только для блоков пакета)
+        if page["images"]:
+            section_lines.append("")
+            section_lines.append("### OCR-описания блоков:")
+            for img in page["images"]:
+                section_lines.append(img)
+                section_lines.append("")
+
+        parts.append("\n".join(section_lines))
+
+    return "\n\n---\n\n".join(parts)
+
+
+def _extract_image_context_for_blocks(md_file_path: str, block_ids: list[str]) -> str:
+    """Legacy wrapper — вызывает новую функцию без привязки к страницам.
+
+    Используется только если нет информации о страницах (fallback).
+    """
+    return _extract_page_context_for_blocks(md_file_path, block_ids, [])
 
 
 # ─── Анализ пакета image-блоков (OCR-пайплайн) ───
@@ -373,7 +468,7 @@ def prepare_block_batch_task(
     block_lines = []
     for block in blocks:
         block_path = str(
-            PROJECTS_DIR / project_id / "_output" / "blocks" / block["file"]
+            resolve_project_dir(project_id) / "_output" / "blocks" / block["file"]
         )
         block_lines.append(
             f"- `{block_path}` (стр. {block.get('page', '?')}, "
@@ -384,9 +479,12 @@ def prepare_block_batch_task(
     _, output_path = _get_project_paths(project_id)
     md_file_path = _get_md_file_path(project_info, project_id)
 
-    # Извлекаем inline MD-контекст только для блоков этого пакета
+    # Извлекаем inline MD-контекст: текст страниц + IMAGE-описания блоков
     batch_block_ids = [b["block_id"] for b in blocks]
-    md_context = _extract_image_context_for_blocks(md_file_path, batch_block_ids)
+    batch_pages = [b["page"] for b in blocks if b.get("page")]
+    md_context = _extract_page_context_for_blocks(
+        md_file_path, batch_block_ids, batch_pages
+    )
 
     template = _inject_discipline(template, project_info)
 
@@ -415,7 +513,7 @@ def _prepare_compact_findings_input(project_id: str) -> Path | None:
 
     Типичное сжатие: 800 KB → 100-200 KB (4-8x меньше).
     """
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     stage01 = output_dir / "01_text_analysis.json"
     stage02 = output_dir / "02_blocks_analysis.json"
     compact_path = output_dir / "_findings_compact.json"
@@ -435,22 +533,29 @@ def _prepare_compact_findings_input(project_id: str) -> Path | None:
         except (json.JSONDecodeError, OSError):
             return None
 
-    # Из 02: preliminary_findings, items_verified, key_values (без полных summary)
+    # Из 02: findings из block_analyses, items_verified, key_values (без полных summary)
     if stage02.exists():
         try:
             data02 = json.loads(stage02.read_text(encoding="utf-8"))
-
-            # Preliminary findings — полностью
-            compact["preliminary_findings"] = data02.get("preliminary_findings", [])
 
             # Items verified — полностью
             compact["items_verified_from_stage_01"] = data02.get(
                 "items_verified_from_stage_01", []
             )
 
-            # Из block_analyses: только block_id, page, sheet_type, key_values_read, findings
-            # Без полных summary и label (экономия ~60% объёма 02)
+            # Собираем findings из block_analyses[].findings (основной источник)
+            # + legacy preliminary_findings
             block_analyses = data02.get("block_analyses", [])
+            all_block_findings = []
+            for ba in block_analyses:
+                for f in ba.get("findings", []):
+                    if "block_evidence" not in f:
+                        f["block_evidence"] = ba.get("block_id", "")
+                    all_block_findings.append(f)
+            legacy_findings = data02.get("preliminary_findings", [])
+            compact["preliminary_findings"] = all_block_findings + legacy_findings
+
+            # Из block_analyses: только block_id, page, sheet_type, key_values_read
             compact["blocks_compact"] = [
                 {
                     "block_id": ba.get("block_id", ""),
@@ -458,7 +563,6 @@ def _prepare_compact_findings_input(project_id: str) -> Path | None:
                     "sheet_type": ba.get("sheet_type", ""),
                     "key_values_read": ba.get("key_values_read", []),
                     "findings_count": len(ba.get("findings", [])),
-                    # findings уже в preliminary_findings — не дублируем
                 }
                 for ba in block_analyses
             ]
@@ -524,6 +628,86 @@ def prepare_findings_merge_task(
 
 # ─── Оптимизация проектных решений ───
 
+# Маппинг дисциплин → разделы вендор-листа (по первой колонке таблицы)
+_VENDOR_SECTIONS_BY_DISCIPLINE: dict[str, list[str]] = {
+    "OV": [
+        "Вентиляция и кондиционирование",
+        "Отопление и теплоснабжение",
+        "Холодоснабжение",
+        "Автоматизация и диспетчеризация",
+    ],
+    "EM": [
+        "Электроснабжение и освещение",
+        "Автоматизация и диспетчеризация",
+    ],
+    "VK": [
+        "Системы водоснабжения",
+        "Система водоотведения",
+    ],
+    "PB": [
+        "Автоматическое пожаротушение",
+        "Газовое пожаротушение",
+        "Автоматика систем ППЗ",
+    ],
+    "SS": [
+        "Системы безопасности",
+        "Автоматика систем ППЗ",
+        "Автоматизация и диспетчеризация",
+    ],
+}
+
+
+def _load_vendor_list_for_discipline(section: str) -> str:
+    """Загрузить и отфильтровать вендор-лист по дисциплине.
+
+    Парсит MD-таблицу, оставляет только строки с разделами,
+    относящимися к указанной дисциплине.
+    """
+    vendor_path = PROJECTS_DIR / "DOC" / "вендор лист.md"
+    if not vendor_path.exists():
+        return "(вендор-лист не найден)"
+
+    try:
+        content = vendor_path.read_text(encoding="utf-8")
+    except OSError:
+        return "(ошибка чтения вендор-листа)"
+
+    allowed = _VENDOR_SECTIONS_BY_DISCIPLINE.get(section, [])
+    if not allowed:
+        return "(нет маппинга вендор-листа для дисциплины " + section + ")"
+
+    # Парсим MD-таблицу: строки начинаются с |
+    lines = content.split("\n")
+    header_lines: list[str] = []
+    data_lines: list[str] = []
+    current_section = ""
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        # Заголовок и разделитель таблицы (первые 2 строки с |)
+        if not header_lines or (len(header_lines) == 1 and ":---" in stripped):
+            header_lines.append(stripped)
+            continue
+
+        # Определяем текущий раздел — первая колонка содержит **жирный** текст
+        cols = [c.strip() for c in stripped.split("|")]
+        # cols[0] пустой (до первого |), cols[1] = первая колонка
+        if len(cols) >= 2 and cols[1] and "**" in cols[1]:
+            current_section = cols[1].replace("**", "").strip()
+
+        # Проверяем, подходит ли текущий раздел
+        if any(a.lower() in current_section.lower() for a in allowed):
+            data_lines.append(stripped)
+
+    if not data_lines:
+        return "(нет позиций вендор-листа для дисциплины " + section + ")"
+
+    result = "\n".join(header_lines + data_lines)
+    return result
+
+
 def prepare_optimization_task(
     project_info: dict,
     project_id: str,
@@ -537,11 +721,17 @@ def prepare_optimization_task(
     _, output_path = _get_project_paths(project_id)
     md_file_path = _get_md_file_path(project_info, project_id)
 
+    # Вендор-лист — отфильтрованный по дисциплине
+    section = (project_info or {}).get("section", "EM")
+    vendor_list_text = _load_vendor_list_for_discipline(section)
+
     template = _inject_discipline(template, project_info)
 
     task = (
         template
+        .replace("{PROJECT_ID}", project_id)
         .replace("{OUTPUT_PATH}", output_path)
         .replace("{MD_FILE_PATH}", md_file_path)
+        .replace("{VENDOR_LIST}", vendor_list_text)
     )
     return task

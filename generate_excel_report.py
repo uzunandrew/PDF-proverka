@@ -234,6 +234,36 @@ FIELD_FUNCS = {
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  СИСТЕМА ТИПОВ ОПТИМИЗАЦИИ
+# ═══════════════════════════════════════════════════════════════════════
+
+OPT_TYPE_CONFIG = {
+    "cheaper_analog":  {"icon": "💰", "label": "Дешевле аналог",     "bg": "D5F5E3", "bg_alt": "E8F8EE", "fg": "1E8449"},
+    "faster_install":  {"icon": "⚡", "label": "Быстрее монтаж",     "bg": "D6EAF8", "bg_alt": "E8F4FC", "fg": "1F618D"},
+    "simpler_design":  {"icon": "🔧", "label": "Проще конструкция",  "bg": "FDEBD0", "bg_alt": "FEF5E7", "fg": "B9770E"},
+    "lifecycle":       {"icon": "🔄", "label": "Жизн. цикл",        "bg": "E8DAEF", "bg_alt": "F2E8F7", "fg": "6C3483"},
+}
+
+OPT_COLUMNS = [
+    ("num",       "№",                5),
+    ("id",        "ID",              10),
+    ("section",   "Раздел/Лист",    24),
+    ("current",   "Текущее решение", 42),
+    ("proposed",  "Предложение",     42),
+    ("type",      "Тип",            20),
+    ("savings",   "Экономия",       12),
+    ("timeline",  "Сроки",          14),
+    ("risks",     "Риски",          32),
+]
+
+def opt_type_label(t):
+    return OPT_TYPE_CONFIG.get(t, {}).get("label", t)
+
+def opt_type_cfg(t):
+    return OPT_TYPE_CONFIG.get(t, {"icon": "❓", "label": t, "bg": "F2F2F2", "bg_alt": "F8F8F8", "fg": "595959"})
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  ПОИСК И ЗАГРУЗКА ПРОЕКТОВ
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -242,22 +272,37 @@ PROJECTS_DIR = os.path.join(BASE_DIR, "projects")
 REPORTS_DIR  = os.path.join(BASE_DIR, "отчет")
 
 
+def _iter_project_dirs(root):
+    """Рекурсивно найти все папки проектов (включая подпапки-группы)."""
+    results = []
+    for name in sorted(os.listdir(root)):
+        entry = os.path.join(root, name)
+        if not os.path.isdir(entry) or name.startswith("_"):
+            continue
+        info = os.path.join(entry, "project_info.json")
+        has_pdf = any(f.endswith(".pdf") for f in os.listdir(entry))
+        if os.path.exists(info) or has_pdf:
+            results.append((name, entry))
+        else:
+            for sub in sorted(os.listdir(entry)):
+                sub_path = os.path.join(entry, sub)
+                if os.path.isdir(sub_path) and not sub.startswith("_"):
+                    results.append((sub, sub_path))
+    return results
+
+
 def find_projects(specific_paths=None) -> list:
     results = []
     if specific_paths:
-        dirs = [os.path.abspath(p) for p in specific_paths]
+        dirs = [(os.path.basename(os.path.abspath(p)), os.path.abspath(p)) for p in specific_paths]
     else:
         if not os.path.isdir(PROJECTS_DIR):
             print(f"[ERR] Папка projects/ не найдена: {PROJECTS_DIR}")
             return results
-        dirs = [
-            os.path.join(PROJECTS_DIR, d)
-            for d in sorted(os.listdir(PROJECTS_DIR))
-            if os.path.isdir(os.path.join(PROJECTS_DIR, d))
-        ]
-    for d in dirs:
-        pid = os.path.basename(d)
+        dirs = _iter_project_dirs(PROJECTS_DIR)
+    for pid, d in dirs:
         fp  = os.path.join(d, "_output", "03_findings.json")
+        op  = os.path.join(d, "_output", "optimization.json")
         ip  = os.path.join(d, "project_info.json")
         # Имя Excel-листа (≤ 31 символ, без спецсимволов)
         sheet_name = pid.replace("/", "-").replace("\\", "-")
@@ -265,12 +310,14 @@ def find_projects(specific_paths=None) -> list:
             sheet_name = sheet_name.replace(ch, "")
         sheet_name = sheet_name[:31]
         results.append({
-            "project_id":    pid,
-            "folder":        d,
-            "findings_path": fp,
-            "info_path":     ip,
-            "has_findings":  os.path.isfile(fp),
-            "sheet_name":    sheet_name,
+            "project_id":       pid,
+            "folder":           d,
+            "findings_path":    fp,
+            "optimization_path": op,
+            "info_path":        ip,
+            "has_findings":     os.path.isfile(fp),
+            "has_optimization": os.path.isfile(op),
+            "sheet_name":       sheet_name,
         })
     return results
 
@@ -316,7 +363,7 @@ def build_summary_sheet(wb, projects_data: list):
     hdr.value = (
         f"СВОДНЫЙ ОТЧЁТ АУДИТА   |   "
         f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}   |   "
-        f"Раздел: ЭОМ / ЭС / ЭМ"
+        f"Аудит проектной документации"
     )
     hdr.font  = Font(bold=True, size=11, color=PROJ_HDR_FG, name="Calibri")
     hdr.fill  = make_fill(PROJ_HDR_BG)
@@ -571,12 +618,250 @@ def build_project_sheet(wb, pd_entry: dict):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  ЛИСТ ОПТИМИЗАЦИИ
+# ═══════════════════════════════════════════════════════════════════════
+
+def build_optimization_summary_sheet(wb, projects_data: list):
+    """Сводный лист оптимизации (аналог СВОДКА для замечаний)."""
+    ws = wb.active if wb.active.title == "Sheet" else wb.create_sheet()
+    ws.title = "СВОДКА"
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 85
+
+    col_widths = [5, 30, 38, 14, 14, 14, 14, 10]
+    for i, w in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    row = 1
+    headers = [
+        "№", "Проект (ID)", "Объект / Раздел",
+        "💰 Аналог", "⚡ Монтаж", "🔧 Конструкция",
+        "🔄 Жизн.цикл", "Итого"
+    ]
+    for col, h in enumerate(headers, 1):
+        cell(ws, row, col, h, bg=HEADER_BG, fg=HEADER_FG, bold=True,
+             align_h="center", align_v="center", font_size=10)
+    ws.row_dimensions[row].height = 24
+
+    row = 2
+    ws.merge_cells(f"A{row}:H{row}")
+    hdr = ws[f"A{row}"]
+    hdr.value = (
+        f"СВОДНЫЙ ОТЧЁТ ОПТИМИЗАЦИИ   |   "
+        f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}   |   "
+        f"Сценарии оптимизации проектных решений"
+    )
+    hdr.font = Font(bold=True, size=11, color=PROJ_HDR_FG, name="Calibri")
+    hdr.fill = make_fill("1B7F4B")
+    hdr.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[row].height = 22
+
+    ws.auto_filter.ref = "A1:H1"
+    total_by_type = {"cheaper_analog": 0, "faster_install": 0, "simpler_design": 0, "lifecycle": 0}
+
+    for idx, pd in enumerate(projects_data, 1):
+        row += 1
+        ws.row_dimensions[row].height = 28
+        pinfo = pd.get("project_info", {})
+        opt_data = pd.get("optimization_json", {})
+        items = opt_data.get("items", [])
+        meta = opt_data.get("meta", {})
+        by_type = meta.get("by_type", {})
+
+        obj_name = pinfo.get("object") or pinfo.get("description") or "—"
+        row_bg = "F7F9FC" if idx % 2 == 0 else "FFFFFF"
+
+        cell(ws, row, 1, idx, bg=row_bg, align_h="center")
+        pid_cell = cell(ws, row, 2, pd["project_id"], bg=row_bg, bold=True)
+        try:
+            sn = "ОПТ " + pd.get("sheet_name", pd["project_id"])[:27]
+            pid_cell.hyperlink = f"#'{sn}'!A1"
+            pid_cell.font = Font(bold=True, color="1B7F4B", underline="single", size=10, name="Calibri")
+        except Exception:
+            pass
+        cell(ws, row, 3, obj_name, bg=row_bg)
+
+        if pd["has_optimization"] and items:
+            type_keys = ["cheaper_analog", "faster_install", "simpler_design", "lifecycle"]
+            type_bgs = ["D5F5E3", "D6EAF8", "FDEBD0", "E8DAEF"]
+            for ci, (tk, bg_t) in enumerate(zip(type_keys, type_bgs), 4):
+                v = by_type.get(tk, 0)
+                cell(ws, row, ci, v if v else "—", bg=bg_t if v else row_bg, align_h="center")
+                total_by_type[tk] = total_by_type.get(tk, 0) + v
+            total = sum(by_type.get(k, 0) for k in type_keys)
+            cell(ws, row, 8, total, bg=row_bg, bold=True, align_h="center")
+        else:
+            for c_i in range(4, 9):
+                cell(ws, row, c_i, "нет данных", bg="EEEEEE", fg="999999",
+                     align_h="center", italic=True, font_size=9)
+
+    # Итого
+    row += 1
+    ws.row_dimensions[row].height = 22
+    ws.merge_cells(f"A{row}:C{row}")
+    cell(ws, row, 1, "ИТОГО", bg=TOTAL_BG, fg="FFFFFF", bold=True, align_h="right")
+    type_bgs = ["D5F5E3", "D6EAF8", "FDEBD0", "E8DAEF"]
+    type_keys = ["cheaper_analog", "faster_install", "simpler_design", "lifecycle"]
+    for ci, (tk, bg_t) in enumerate(zip(type_keys, type_bgs), 4):
+        v = total_by_type.get(tk, 0)
+        cell(ws, row, ci, v if v else "—", bg=bg_t, bold=True, align_h="center")
+    cell(ws, row, 8, sum(total_by_type.values()), bg="D9D9D9", bold=True, align_h="center")
+
+    # Легенда
+    row += 2
+    ws.merge_cells(f"A{row}:H{row}")
+    leg_hdr = ws[f"A{row}"]
+    leg_hdr.value = "ЛЕГЕНДА ТИПОВ ОПТИМИЗАЦИИ"
+    leg_hdr.font = Font(bold=True, color=HEADER_FG, size=10, name="Calibri")
+    leg_hdr.fill = make_fill(HEADER_BG)
+    leg_hdr.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[row].height = 18
+
+    for tk in type_keys:
+        cfg = OPT_TYPE_CONFIG[tk]
+        row += 1
+        ws.merge_cells(f"A{row}:B{row}")
+        cell(ws, row, 1, f"{cfg['icon']}  {cfg['label']}", bg=cfg["bg"], fg=cfg["fg"],
+             bold=True, align_h="center", font_size=10)
+        ws.merge_cells(f"C{row}:H{row}")
+        descs = {
+            "cheaper_analog": "Замена на более дешёвый аналог без потери качества",
+            "faster_install": "Упрощение монтажа, сокращение сроков",
+            "simpler_design": "Упрощение конструктивных решений",
+            "lifecycle": "Оптимизация стоимости жизненного цикла",
+        }
+        cell(ws, row, 3, descs.get(tk, ""), bg="FAFAFA", fg="333333", align_h="left", font_size=9)
+        ws.row_dimensions[row].height = 18
+
+    row += 2
+    ws.merge_cells(f"A{row}:H{row}")
+    dt_cell = ws[f"A{row}"]
+    dt_cell.value = f"Отчёт сформирован: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    dt_cell.font = Font(italic=True, size=9, color="666666", name="Calibri")
+    dt_cell.alignment = Alignment(horizontal="right", vertical="center")
+    ws.row_dimensions[row].height = 16
+
+    ws.freeze_panes = "A3"
+
+
+def build_optimization_project_sheet(wb, pd_entry: dict):
+    """Лист оптимизации одного проекта."""
+    project_id = pd_entry["project_id"]
+    pinfo = pd_entry.get("project_info", {})
+    opt_data = pd_entry.get("optimization_json", {})
+    items = opt_data.get("items", [])
+    meta = opt_data.get("meta", {})
+
+    sheet_name = "ОПТ " + pd_entry["sheet_name"][:27]
+    ws = wb.create_sheet(title=sheet_name)
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+
+    last_col_letter = get_column_letter(len(OPT_COLUMNS))
+
+    for i, (_, _, width) in enumerate(OPT_COLUMNS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    # Строка 1: заголовки
+    row = 1
+    for col, (key, header, _) in enumerate(OPT_COLUMNS, 1):
+        cell(ws, row, col, header, bg=HEADER_BG, fg=HEADER_FG, bold=True,
+             align_h="center" if key in ("num", "savings") else "left",
+             align_v="center", font_size=10)
+    ws.row_dimensions[row].height = 24
+    ws.auto_filter.ref = f"A{row}:{last_col_letter}{row}"
+
+    # Строка 2: заголовок проекта
+    row = 2
+    total_cnt = meta.get("total_items", len(items))
+    savings_pct = meta.get("estimated_savings_pct", 0)
+    report_dt = datetime.now().strftime("%d.%m.%Y %H:%M")
+    proj_label = f"{project_id}  |  оптимизаций: {total_cnt}"
+    if savings_pct:
+        proj_label += f"  |  экономия: −{savings_pct}%"
+    proj_label += f"  |  отчёт: {report_dt}"
+
+    ws.merge_cells(f"A{row}:{last_col_letter}{row}")
+    hdr2 = ws[f"A{row}"]
+    hdr2.value = proj_label
+    hdr2.font = Font(bold=True, size=11, color="FFFFFF", name="Calibri")
+    hdr2.fill = make_fill("1B7F4B")
+    hdr2.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[row].height = 22
+
+    if not items:
+        row += 1
+        ws.merge_cells(f"A{row}:{last_col_letter}{row}")
+        c = ws[f"A{row}"]
+        c.value = "Оптимизация не выполнена — файл optimization.json отсутствует или пуст."
+        c.font = Font(italic=True, color="888888", size=10, name="Calibri")
+        c.alignment = Alignment(horizontal="center")
+        ws.freeze_panes = "A3"
+        return
+
+    # Строки данных
+    for idx, item in enumerate(items, 1):
+        row += 1
+        opt_type = item.get("type", "")
+        cfg = opt_type_cfg(opt_type)
+        row_bg = cfg["bg"] if idx % 2 != 0 else cfg["bg_alt"]
+
+        vals = [
+            idx,
+            item.get("id", ""),
+            item.get("section", ""),
+            item.get("current", ""),
+            item.get("proposed", ""),
+            f"{cfg['icon']} {cfg['label']}",
+            f"{item.get('savings_pct', 0)}%" if item.get("savings_pct") else "—",
+            item.get("timeline_impact", ""),
+            item.get("risks", ""),
+        ]
+
+        for col, (key, _, _) in enumerate(OPT_COLUMNS, 1):
+            val = vals[col - 1]
+            is_num = (key == "num")
+            is_type = (key == "type")
+            cell(ws, row, col, val, bg=row_bg,
+                 fg=cfg["fg"] if is_type else "000000",
+                 bold=is_num or is_type,
+                 align_h="center" if key in ("num", "savings") else "left",
+                 align_v="top", font_size=10)
+
+        max_len = max(len(str(item.get("current", ""))), len(str(item.get("proposed", ""))))
+        ws.row_dimensions[row].height = max(35, min(130, max_len // 2))
+
+    # Итоговая строка
+    row += 1
+    ws.row_dimensions[row].height = 18
+    by_type = {}
+    for item in items:
+        t = item.get("type", "unknown")
+        by_type[t] = by_type.get(t, 0) + 1
+    parts = []
+    for tk in ["cheaper_analog", "faster_install", "simpler_design", "lifecycle"]:
+        cnt = by_type.get(tk, 0)
+        if cnt:
+            cfg = OPT_TYPE_CONFIG.get(tk, {})
+            parts.append(f"{cfg.get('icon', '')} {cfg.get('label', tk)}: {cnt}")
+    ws.merge_cells(f"A{row}:{last_col_letter}{row}")
+    summary_cell = ws[f"A{row}"]
+    summary_cell.value = "  |  ".join(parts) if parts else ""
+    summary_cell.font = Font(italic=True, size=9, color="444444", name="Calibri")
+    summary_cell.fill = make_fill("E8F5E9")
+    summary_cell.alignment = Alignment(horizontal="center", vertical="center")
+    summary_cell.border = thin_border()
+
+    ws.freeze_panes = "A3"
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  ГЛАВНАЯ ФУНКЦИЯ
 # ═══════════════════════════════════════════════════════════════════════
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Генерация Excel-отчёта по результатам аудита проектов ЭОМ"
+        description="Генерация Excel-отчёта по результатам аудита проектной документации"
     )
     parser.add_argument(
         "projects", nargs="*",
@@ -590,6 +875,10 @@ def main():
         "--no-summary", action="store_true",
         help="Не создавать лист СВОДКА"
     )
+    parser.add_argument(
+        "--type", choices=["findings", "optimization", "all"], default="all",
+        help="Тип отчёта: findings (замечания), optimization (оптимизации), all (всё)"
+    )
     args = parser.parse_args()
 
     # ── Найти проекты ─────────────────────────────────────────────────
@@ -602,10 +891,13 @@ def main():
     print(f"  Генерация Excel-отчёта  |  проектов: {len(projects)}")
     print(f"{'='*62}")
 
+    report_type = args.type  # findings | optimization | all
+
     # ── Загрузить данные ──────────────────────────────────────────────
     for p in projects:
         p["project_info"] = {}
         p["findings_json"] = {}
+        p["optimization_json"] = {}
         p["meta_json"] = {}
 
         if os.path.isfile(p["info_path"]):
@@ -614,7 +906,7 @@ def main():
             except Exception:
                 pass
 
-        if p["has_findings"]:
+        if report_type in ("findings", "all") and p["has_findings"]:
             try:
                 fj = load_json(p["findings_path"])
                 p["findings_json"] = fj
@@ -623,19 +915,40 @@ def main():
                 print(f"  [OK]  {p['project_id']:32s}  {cnt} замечаний")
             except Exception as e:
                 print(f"  [!!]  {p['project_id']:32s}  Ошибка: {e}")
-        else:
+
+        if report_type in ("optimization", "all") and p["has_optimization"]:
+            try:
+                oj = load_json(p["optimization_path"])
+                p["optimization_json"] = oj
+                cnt = len(oj.get("items", []))
+                print(f"  [OK]  {p['project_id']:32s}  {cnt} оптимизаций")
+            except Exception as e:
+                print(f"  [!!]  {p['project_id']:32s}  Ошибка оптимизации: {e}")
+
+        if not p["has_findings"] and report_type in ("findings", "all"):
             print(f"  [--]  {p['project_id']:32s}  нет 03_findings.json")
+        if not p["has_optimization"] and report_type in ("optimization", "all"):
+            print(f"  [--]  {p['project_id']:32s}  нет optimization.json")
 
     # ── Создать книгу ─────────────────────────────────────────────────
     wb = openpyxl.Workbook()
 
-    # Сначала считаем sheet_names (уже в find_projects)
-    # Создаём листы: сначала сводка (если нужна), потом проекты
-    if not args.no_summary:
-        build_summary_sheet(wb, projects)
-
-    for p in projects:
-        build_project_sheet(wb, p)
+    if report_type == "findings":
+        if not args.no_summary:
+            build_summary_sheet(wb, projects)
+        for p in projects:
+            build_project_sheet(wb, p)
+    elif report_type == "optimization":
+        build_optimization_summary_sheet(wb, projects)
+        for p in projects:
+            build_optimization_project_sheet(wb, p)
+    else:  # all
+        if not args.no_summary:
+            build_summary_sheet(wb, projects)
+        for p in projects:
+            build_project_sheet(wb, p)
+        for p in projects:
+            build_optimization_project_sheet(wb, p)
 
     # ── Сохранить ─────────────────────────────────────────────────────
     if args.out:

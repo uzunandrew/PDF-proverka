@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from webapp.services import project_service
-from webapp.config import PROJECTS_DIR
+from webapp.services.project_service import resolve_project_dir
 
 router = APIRouter(prefix="/api/tiles", tags=["tiles"])
 
@@ -61,7 +61,7 @@ async def get_tile_image(project_id: str, page_num: str, row: int, col: int):
 @router.get("/{project_id}/blocks")
 async def get_blocks(project_id: str):
     """Список image-блоков, сгруппированных по страницам."""
-    blocks_dir = PROJECTS_DIR / project_id / "_output" / "blocks"
+    blocks_dir = resolve_project_dir(project_id) / "_output" / "blocks"
     index_path = blocks_dir / "index.json"
     if not index_path.exists():
         raise HTTPException(404, f"Блоки не найдены для '{project_id}'")
@@ -87,6 +87,8 @@ async def get_blocks(project_id: str):
     return {
         "project_id": project_id,
         "total_blocks": index_data.get("total_blocks", 0),
+        "total_expected": index_data.get("total_expected", 0),
+        "errors": index_data.get("errors", 0),
         "pages": pages,
     }
 
@@ -94,7 +96,7 @@ async def get_blocks(project_id: str):
 @router.get("/{project_id}/blocks/analysis")
 async def get_blocks_analysis(project_id: str):
     """Агрегированные данные анализа блоков из block_batch_*.json."""
-    output_dir = PROJECTS_DIR / project_id / "_output"
+    output_dir = resolve_project_dir(project_id) / "_output"
     batch_files = sorted(output_dir.glob("block_batch_*.json"))
 
     blocks_map = {}
@@ -121,7 +123,7 @@ async def get_blocks_analysis(project_id: str):
 @router.get("/{project_id}/blocks/image/{block_id}")
 async def get_block_image(project_id: str, block_id: str):
     """PNG-файл кропнутого блока."""
-    block_path = PROJECTS_DIR / project_id / "_output" / "blocks" / f"block_{block_id}.png"
+    block_path = resolve_project_dir(project_id) / "_output" / "blocks" / f"block_{block_id}.png"
     if not block_path.exists():
         raise HTTPException(404, f"Блок {block_id} не найден")
     return FileResponse(str(block_path), media_type="image/png")

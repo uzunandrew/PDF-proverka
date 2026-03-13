@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="/static/css/styles.css?v=25">
+    <link rel="stylesheet" href="/static/css/styles.css?v=70">
 </head>
 <body>
     <div id="app">
@@ -18,44 +18,16 @@
                 <h1 class="logo" @click="navigate('/')">Audit Manager</h1>
             </div>
             <div class="header-right">
-                <!-- Usage Dashboard (как на дашборде Anthropic) -->
-                <div class="usage-dashboard" @click="showUsageDetails = !showUsageDetails">
-                    <!-- Строка 1: Текущая сессия (5ч окно) -->
-                    <div class="usage-row"
-                         :class="{'usage-row--warning': globalUsage.session_5h_percent > 70,
-                                  'usage-row--danger': globalUsage.session_5h_percent > 90}">
-                        <span class="usage-row__label">Сессия</span>
-                        <div class="usage-row__bar">
-                            <div class="usage-row__bar-fill"
-                                 :style="{width: Math.min(100, globalUsage.session_5h_percent || 0) + '%'}"></div>
-                        </div>
-                        <span class="usage-row__pct">{{ Math.round(globalUsage.session_5h_percent || 0) }}%</span>
-                    </div>
-
-                    <!-- Строка 2: Все модели (недельный) -->
-                    <div class="usage-row"
-                         :class="{'usage-row--warning': globalUsage.weekly_all_percent > 70,
-                                  'usage-row--danger': globalUsage.weekly_all_percent > 90}">
-                        <span class="usage-row__label">Все</span>
-                        <div class="usage-row__bar">
-                            <div class="usage-row__bar-fill"
-                                 :style="{width: Math.min(100, globalUsage.weekly_all_percent || 0) + '%'}"></div>
-                        </div>
-                        <span class="usage-row__pct">{{ Math.round(globalUsage.weekly_all_percent || 0) }}%</span>
-                    </div>
-
-                    <!-- Строка 3: Только Sonnet (недельный) -->
-                    <div class="usage-row"
-                         :class="{'usage-row--warning': sonnetPercent > 70,
-                                  'usage-row--danger': sonnetPercent > 90}">
-                        <span class="usage-row__label">Sonnet</span>
-                        <div class="usage-row__bar">
-                            <div class="usage-row__bar-fill usage-row__bar-fill--sonnet"
-                                 :style="{width: Math.min(100, sonnetPercent) + '%'}"></div>
-                        </div>
-                        <span class="usage-row__pct">{{ Math.round(sonnetPercent) }}%</span>
-                    </div>
-                </div>
+                <!-- Usage icon button -->
+                <button class="usage-toggle-btn" @click="showUsageDetails = !showUsageDetails"
+                        :class="{'usage-toggle-btn--warning': globalUsage.session_5h_percent > 70 || globalUsage.weekly_all_percent > 70,
+                                 'usage-toggle-btn--danger': globalUsage.session_5h_percent > 90 || globalUsage.weekly_all_percent > 90}"
+                        title="Статистика токенов">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="12" y="1" width="4" height="22" rx="1"/><rect x="4" y="8" width="4" height="15" rx="1"/><rect x="20" y="5" width="4" height="18" rx="1" transform="translate(-4,0)"/>
+                    </svg>
+                    <span class="usage-toggle-btn__pct">{{ Math.round(globalUsage.weekly_all_percent || 0) }}%</span>
+                </button>
 
                 <!-- Выпадающая панель с деталями -->
                 <div class="usage-details-panel" v-if="showUsageDetails">
@@ -64,6 +36,40 @@
                         <span class="usage-details__scan">
                             {{ globalUsage.scanned_files }} файлов за {{ globalUsage.scan_duration_ms }}мс
                         </span>
+                    </div>
+
+                    <!-- Мини-бары в панели -->
+                    <div class="usage-details__bars">
+                        <div class="usage-row"
+                             :class="{'usage-row--warning': globalUsage.session_5h_percent > 70,
+                                      'usage-row--danger': globalUsage.session_5h_percent > 90}">
+                            <span class="usage-row__label">Сессия</span>
+                            <div class="usage-row__bar">
+                                <div class="usage-row__bar-fill"
+                                     :style="{width: Math.min(100, globalUsage.session_5h_percent || 0) + '%'}"></div>
+                            </div>
+                            <span class="usage-row__pct">{{ Math.round(globalUsage.session_5h_percent || 0) }}%</span>
+                        </div>
+                        <div class="usage-row"
+                             :class="{'usage-row--warning': globalUsage.weekly_all_percent > 70,
+                                      'usage-row--danger': globalUsage.weekly_all_percent > 90}">
+                            <span class="usage-row__label">Все</span>
+                            <div class="usage-row__bar">
+                                <div class="usage-row__bar-fill"
+                                     :style="{width: Math.min(100, globalUsage.weekly_all_percent || 0) + '%'}"></div>
+                            </div>
+                            <span class="usage-row__pct">{{ Math.round(globalUsage.weekly_all_percent || 0) }}%</span>
+                        </div>
+                        <div class="usage-row"
+                             :class="{'usage-row--warning': sonnetPercent > 70,
+                                      'usage-row--danger': sonnetPercent > 90}">
+                            <span class="usage-row__label">Sonnet</span>
+                            <div class="usage-row__bar">
+                                <div class="usage-row__bar-fill usage-row__bar-fill--sonnet"
+                                     :style="{width: Math.min(100, sonnetPercent) + '%'}"></div>
+                            </div>
+                            <span class="usage-row__pct">{{ Math.round(sonnetPercent) }}%</span>
+                        </div>
                     </div>
 
                     <div class="usage-details__section">
@@ -111,7 +117,7 @@
         <!-- Navigation breadcrumb -->
         <nav class="breadcrumb" v-if="currentView !== 'dashboard'">
             <a href="#" @click.prevent="navigate('/')">Проекты</a>
-            <span v-if="currentProject"> / {{ currentProject.name }}</span>
+            <span v-if="currentProject"> / <a href="#" @click.prevent="navigate('/project/' + currentProject.project_id)">{{ currentProject.name }}</a></span>
             <span v-if="currentView === 'findings'"> / Замечания</span>
             <span v-if="currentView === 'tiles'"> / Тайлы</span>
             <span v-if="currentView === 'blocks'"> / Блоки</span>
@@ -121,19 +127,50 @@
             <span v-if="currentView === 'log'"> / Лог</span>
         </nav>
 
+        <!-- ═══ Project Tabs (global, visible on all project sub-pages) ═══ -->
+        <div v-if="currentProject && currentView !== 'dashboard'" class="container container--tabs">
+            <div class="project-tabs">
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'project'}"
+                        @click="navigate('/project/' + currentProject.project_id)">Инфо</button>
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'blocks'}"
+                        @click="navigate('/project/' + currentProject.project_id + '/blocks')">
+                    Блоки<span v-if="currentProject.block_count" class="project-tab__count project-tab__count--teal">{{ currentProject.block_count }}</span>
+                </button>
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'prompts'}"
+                        @click="navigate('/project/' + currentProject.project_id + '/prompts')">Промпты</button>
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'log'}"
+                        @click="navigate('/project/' + currentProject.project_id + '/log')">Лог</button>
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'findings'}"
+                        @click="navigate('/project/' + currentProject.project_id + '/findings')">
+                    Замечания<span v-if="currentProject.findings_count" class="project-tab__count project-tab__count--amber">{{ currentProject.findings_count }}</span>
+                </button>
+                <button class="project-tab" :class="{'project-tab--active': currentView === 'optimization'}"
+                        @click="navigate('/project/' + currentProject.project_id + '/optimization')">
+                    Оптимизация<span v-if="currentProject.optimization_count" class="project-tab__count project-tab__count--purple">{{ currentProject.optimization_count }}</span>
+                </button>
+            </div>
+        </div>
+
         <!-- ═══ Dashboard ═══ -->
         <div v-if="currentView === 'dashboard'" class="container">
             <div class="dashboard-header">
-                <h2>Проекты ({{ projects.length }})</h2>
-                <label v-if="projects.length > 0" class="batch-select-all">
-                    <input type="checkbox" :checked="selectAllChecked" @change="toggleSelectAll">
-                    <span>Выбрать все</span>
-                </label>
+                <h2>{{ objectName || 'Объект' }} <span class="dashboard-header__count">({{ projects.length }})</span>
+                    <button class="btn-excel-inline" @click="generateExcel('all')" title="Скачать сводный Excel (замечания + оптимизация)">
+                        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M2 1h8l4 4v10H2V1zm8 0v4h4M5 8l2.5 3L10 8M5 11h6" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                            <text x="4.5" y="7.5" font-size="4.5" font-weight="bold" fill="currentColor" font-family="Arial">XLS</text>
+                        </svg>
+                    </button>
+                </h2>
                 <div class="dashboard-actions">
-                    <button class="btn btn-success" @click="scanFolders"
+                    <button class="btn btn-outline btn-sm" @click="toggleAllSections"
+                            :title="allSectionsCollapsed ? 'Развернуть все разделы' : 'Свернуть все разделы'">
+                        {{ allSectionsCollapsed ? '&#9660; Развернуть' : '&#9650; Свернуть' }}
+                    </button>
+                    <button class="btn btn-success" @click="openAddModal"
                             :disabled="addProjectLoading"
-                            title="Добавить проект из папки projects/">
-                        + Добавить проект
+                            title="Добавить раздел или проект">
+                        + Добавить
                     </button>
                     <button class="btn btn-accent" @click="startAllProjects"
                             :disabled="loading || allRunning"
@@ -146,18 +183,50 @@
                 </div>
             </div>
 
-            <div class="projects-grid">
-                <div v-for="p in projects" :key="p.project_id"
-                     class="project-card" :class="{'project-card--ready': p.has_tiles, 'project-card--running': isProjectRunning(p.project_id), 'project-card--selected': isProjectSelected(p.project_id)}">
+            <div v-for="[sectionCode, sectionProjects] in projectsBySection" :key="sectionCode" class="section-group"
+                 draggable="true"
+                 @dragstart="onSectionDragStart($event, sectionCode)"
+                 @dragover.prevent="onSectionDragOver($event, sectionCode)"
+                 @drop.prevent="onSectionDragEnd"
+                 @dragend="onSectionDragEnd"
+                 :class="{ 'section-group--dragging': dragSectionCode === sectionCode, 'section-group--over': dragOverCode === sectionCode && dragSectionCode !== sectionCode }">
+                <div class="section-divider" @click="toggleSection(sectionCode)">
+                    <span class="section-divider__drag" @mousedown.stop title="Перетащите для перемещения">⠿</span>
+                    <span class="section-divider__icon">{{ collapsedSections[sectionCode] ? '▶' : '▼' }}</span>
+                    <span class="section-divider__badge" :style="sectionProjects.length ? disciplineBadgeStyle(sectionCode) : null" :class="{ 'section-divider__badge--empty': !sectionProjects.length }">{{ sectionCode }}</span>
+                    <span class="section-divider__name" :class="{ 'section-divider__name--empty': !sectionProjects.length }">{{ disciplineLabel(sectionCode) }}</span>
+                    <label class="section-divider__check" @click.stop>
+                        <input type="checkbox"
+                               :checked="isSectionSelected(sectionCode)"
+                               @change="toggleSectionSelection(sectionCode)">
+                    </label>
+                    <span class="section-divider__count"
+                          :style="sectionProjects.length ? { color: getDisciplineColor(sectionCode), borderColor: getDisciplineColor(sectionCode) } : null"
+                          :class="{ 'section-divider__count--empty': !sectionProjects.length }">{{ sectionProjects.length }}</span>
+                    <button class="section-divider__excel" @click.stop="exportSectionExcel(sectionCode, sectionProjects)"
+                            :disabled="!sectionProjects.length || sectionExcelLoading === sectionCode"
+                            title="Скачать Excel по разделу">
+                        <span v-if="sectionExcelLoading === sectionCode" class="spinner-sm"></span>
+                        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M2 1h8l4 4v10H2V1zm8 0v4h4M5 8l2.5 3L10 8M5 11h6" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                            <text x="4.5" y="7.5" font-size="4.5" font-weight="bold" fill="currentColor" font-family="Arial">XLS</text>
+                        </svg>
+                    </button>
+                    <button class="section-divider__edit" @click.stop="openEditSection(sectionCode)" title="Редактировать раздел">&#9998;</button>
+                    <div class="section-divider__line"></div>
+                </div>
+                <div v-show="!collapsedSections[sectionCode]" class="projects-grid">
+                <div v-for="p in sectionProjects" :key="p.project_id"
+                     class="project-card" :class="{'project-card--ready': p.has_tiles, 'project-card--running': isProjectRunning(p.project_id), 'project-card--selected': isProjectSelected(p.project_id)}"
+                     @click="navigate('/project/' + p.project_id)">
                     <!-- Checkbox -->
                     <label class="project-card__checkbox" @click.stop>
                         <input type="checkbox" :checked="isProjectSelected(p.project_id)"
                                @change="toggleProjectSelection(p.project_id)">
                     </label>
                     <div class="project-card__header">
-                        <h3>{{ p.name }} <span class="section-badge" :style="disciplineBadgeStyle(p.section)">{{ disciplineLabel(p.section) }}</span></h3>
+                        <h3>{{ p.name }} <span class="section-badge" :style="disciplineBadgeStyle(p.section)">{{ p.section }}</span></h3>
                     </div>
-                    <p class="project-card__desc">{{ p.description }}</p>
 
                     <!-- Pipeline -->
                     <div class="pipeline">
@@ -194,12 +263,13 @@
 
                     <!-- Live Status Indicator -->
                     <div v-if="isProjectRunning(p.project_id)" class="live-status-bar"
-                         :class="{'live-status-bar--stale': isHeartbeatStale(p.project_id)}">
+                         :class="{'live-status-bar--stale': isClaudeStage(getRunningStage(p.project_id)) && isHeartbeatStale(p.project_id)}">
                         <div class="spinner"></div>
-                        <span class="heartbeat-dot"
+                        <span v-if="isClaudeStage(getRunningStage(p.project_id))"
+                              class="heartbeat-dot"
                               :class="isHeartbeatStale(p.project_id) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
                         <span class="status-text">{{ batchProgressText(p.project_id) }}</span>
-                        <span class="status-eta" v-if="getHeartbeatInfo(p.project_id)?.eta_sec">
+                        <span class="status-eta" v-if="isClaudeStage(getRunningStage(p.project_id)) && getHeartbeatInfo(p.project_id)?.eta_sec">
                             ETA: {{ formatETA(getHeartbeatInfo(p.project_id).eta_sec) }}
                         </span>
                         <span class="status-detail" v-if="getProjectLiveInfo(p.project_id)?.started_at">
@@ -211,63 +281,47 @@
                              :style="{width: batchPercent(p.project_id) + '%'}"></div>
                     </div>
 
-                    <!-- Stats -->
-                    <div class="project-card__stats">
-                        <div v-if="p.has_pdf" class="stat">PDF {{ p.pdf_size_mb }} MB</div>
-                        <div v-if="p.has_md_file" class="stat stat--md stat--clickable"
-                             @click.stop="navigate('/project/' + p.project_id + '/document')"
-                             title="Открыть просмотрщик документа">MD {{ p.md_file_size_kb }} KB</div>
-                        <div v-if="p.has_tiles" class="stat">{{ p.tile_count }} tiles</div>
-                        <div v-if="p.total_batches > 0" class="stat">
-                            Batches: {{ p.completed_batches }}/{{ p.total_batches }}
-                            <template v-if="p.total_batches > 0">
-                                ({{ Math.round(p.completed_batches / p.total_batches * 100) }}%)
-                            </template>
+                    <!-- Block crop errors -->
+                    <div v-if="p.block_errors > 0" class="block-crop-warning block-crop-warning--card">
+                        <span class="block-crop-warning__icon">&#9888;</span>
+                        <span>Блоки: {{ p.block_count }}/{{ p.block_expected }} ({{ p.block_errors }} не скачались)</span>
+                    </div>
+
+                    <!-- Severity badges + Замечания button -->
+                    <div v-if="p.findings_count > 0" class="project-card__badges-row">
+                        <div class="severity-badges">
+                            <span v-for="(count, sev) in p.findings_by_severity" :key="sev"
+                                  class="sev-badge" :class="'sev-' + sevClass(sev)">
+                                {{ count }}
+                            </span>
+                            <span class="findings-total">= {{ p.findings_count }}</span>
                         </div>
-                    </div>
-
-                    <!-- Usage (токены) -->
-                    <div v-if="projectUsage[p.project_id] && projectUsage[p.project_id].total_tokens > 0"
-                         class="project-card__usage">
-                        <span class="usage-icon">⚡</span>
-                        {{ formatTokens(projectUsage[p.project_id].total_tokens) }} tok
-                        · ${{ formatCost(projectUsage[p.project_id].total_cost_usd) }}
-                        · {{ projectUsage[p.project_id].total_calls }} calls
-                    </div>
-
-                    <!-- Severity badges -->
-                    <div v-if="p.findings_count > 0" class="severity-badges">
-                        <span v-for="(count, sev) in p.findings_by_severity" :key="sev"
-                              class="sev-badge" :class="'sev-' + sevClass(sev)">
-                            {{ count }}
-                        </span>
-                        <span class="findings-total">= {{ p.findings_count }}</span>
-                    </div>
-
-                    <!-- Optimization badges -->
-                    <div v-if="p.optimization_count > 0" class="severity-badges opt-badges">
-                        <span v-for="(count, type) in p.optimization_by_type" :key="type"
-                              class="sev-badge" :style="{ background: optTypeColor(type) + '22', color: optTypeColor(type), border: '1px solid ' + optTypeColor(type) + '40' }"
-                              :title="optTypeLabel(type)">
-                            {{ count }}
-                        </span>
-                        <span class="findings-total" style="color: var(--emerald, #27ae60)">= {{ p.optimization_count }}
-                            <template v-if="p.optimization_savings_pct > 0">(−{{ p.optimization_savings_pct }}%)</template>
-                        </span>
-                    </div>
-
-                    <!-- Actions -->
-                    <div class="project-card__actions">
-                        <button class="btn btn-sm" @click="navigate('/project/' + p.project_id)">
-                            Открыть
-                        </button>
-                        <button v-if="p.findings_count > 0" class="btn btn-sm btn-outline"
-                                @click="navigate('/project/' + p.project_id + '/findings')">
+                        <button class="btn btn-sm btn-outline"
+                                @click.stop="navigate('/project/' + p.project_id + '/findings')">
                             Замечания
                         </button>
                     </div>
+
+                    <!-- Optimization badges + Оптимизация button -->
+                    <div v-if="p.optimization_count > 0" class="project-card__badges-row">
+                        <div class="severity-badges opt-badges">
+                            <span v-for="(count, type) in p.optimization_by_type" :key="type"
+                                  class="sev-badge" :style="{ background: optTypeColor(type) + '22', color: optTypeColor(type), border: '1px solid ' + optTypeColor(type) + '40' }"
+                                  :title="optTypeLabel(type)">
+                                {{ count }}
+                            </span>
+                            <span class="findings-total" style="color: var(--emerald, #27ae60)">= {{ p.optimization_count }}
+                                <template v-if="p.optimization_savings_pct > 0">(−{{ p.optimization_savings_pct }}%)</template>
+                            </span>
+                        </div>
+                        <button class="btn btn-sm btn-outline"
+                                @click.stop="navigate('/project/' + p.project_id + '/optimization')">
+                            Оптимизация
+                        </button>
+                    </div>
                 </div>
-            </div>
+                </div><!-- /projects-grid -->
+            </div><!-- /section-group -->
         </div>
 
         <!-- ═══ Batch Action Bar ═══ -->
@@ -279,6 +333,19 @@
                 </button>
                 <button class="btn btn-accent" @click="openBatchModal">
                     Запустить все ({{ selectedCount }})
+                </button>
+                <button class="btn btn-outline" @click="selectedProjects = new Set(); selectAllChecked = false">
+                    Сбросить
+                </button>
+            </div>
+        </div>
+
+        <!-- ═══ Add to Queue Bar (when batch is running) ═══ -->
+        <div v-if="selectedCount > 0 && batchRunning" class="batch-action-bar batch-action-bar--add">
+            <span class="batch-action-bar__count">Выбрано: {{ selectedCount }}</span>
+            <div class="batch-action-bar__actions">
+                <button class="btn btn-accent" @click="addToBatch">
+                    Добавить в очередь ({{ selectedCount }})
                 </button>
                 <button class="btn btn-outline" @click="selectedProjects = new Set(); selectAllChecked = false">
                     Сбросить
@@ -326,45 +393,159 @@
         <div v-if="showAddProject" class="modal-overlay" @click="closeAddProject">
             <div class="modal-content modal-add-project" @click.stop>
                 <button class="modal-close" @click="closeAddProject">&times;</button>
-                <h3>Добавить проект</h3>
-                <p class="modal-subtitle">Папки из projects/ с PDF, но без project_info.json:</p>
 
-                <div v-if="addProjectLoading" class="empty-state">Сканирование...</div>
+                <!-- Шаг 1: Выбор действия -->
+                <template v-if="addProjectStep === 'choose'">
+                    <h3>Что добавить?</h3>
+                    <div class="add-choose-grid">
+                        <div class="add-choose-card" @click="goToAddSection">
+                            <div class="add-choose-card__icon">&#x1F4C2;</div>
+                            <div class="add-choose-card__title">Раздел</div>
+                            <div class="add-choose-card__desc">Создать группу для проектов (ОВ, ЭОМ, КР...)</div>
+                        </div>
+                        <div class="add-choose-card" @click="goToAddProject">
+                            <div class="add-choose-card__icon">&#x1F4C4;</div>
+                            <div class="add-choose-card__title">Проект</div>
+                            <div class="add-choose-card__desc">Добавить PDF из папки projects/</div>
+                        </div>
+                    </div>
+                </template>
 
-                <div v-else-if="unregisteredFolders.length === 0" class="empty-state">
-                    Все папки с PDF уже зарегистрированы.
-                </div>
-
-                <div v-else class="add-project-list">
-                    <div v-for="f in unregisteredFolders" :key="f.folder" class="add-project-item">
-                        <div class="add-project-item__info">
-                            <div class="add-project-item__name">{{ f.folder }}</div>
-                            <div class="add-project-item__details">
-                                <span class="stat">PDF: {{ f.pdf_files[0] }} ({{ f.pdf_size_mb }} MB)</span>
-                                <span v-if="f.md_files.length > 0" class="stat stat--md">
-                                    MD: {{ f.md_files[0] }}
-                                </span>
-                                <span v-else class="stat stat--no-md">Нет MD</span>
-                            </div>
-                            <!-- Выбор дисциплины -->
-                            <div class="add-project-item__discipline">
-                                <select class="discipline-select"
-                                        v-model="f._selectedDiscipline"
-                                        :disabled="addProjectLoading">
-                                    <option v-for="d in supportedDisciplines" :key="d.code" :value="d.code">
-                                        {{ d.short_name }} — {{ d.name }}
-                                    </option>
-                                </select>
-                                <span v-if="f._detectedDiscipline" class="discipline-auto-badge"
-                                      :style="{borderColor: getDisciplineColor(f._detectedDiscipline)}">
-                                    авто
+                <!-- Шаг 2: Добавить раздел -->
+                <template v-if="addProjectStep === 'section'">
+                    <h3>Новый раздел</h3>
+                    <p class="modal-subtitle">Создайте группу для проектов одной дисциплины</p>
+                    <div class="add-section-form">
+                        <div class="form-row">
+                            <label>Код (2-3 буквы)</label>
+                            <input type="text" v-model="newSectionCode" placeholder="KR" maxlength="4"
+                                   class="form-input form-input--short" style="text-transform:uppercase">
+                        </div>
+                        <div class="form-row">
+                            <label>Название</label>
+                            <input type="text" v-model="newSectionName" placeholder="Конструктивные решения"
+                                   class="form-input">
+                        </div>
+                        <div class="form-row">
+                            <label>Цвет</label>
+                            <div class="color-picker-row">
+                                <input type="color" v-model="newSectionColor" class="form-color">
+                                <span class="section-badge" :style="{background: newSectionColor + '22', color: newSectionColor, border: '1px solid ' + newSectionColor}">
+                                    {{ newSectionCode || '??' }}
                                 </span>
                             </div>
                         </div>
-                        <button class="btn btn-success btn-sm" @click="registerProject(f.folder)"
-                                :disabled="addProjectLoading">
-                            + Добавить
+                        <div class="form-actions">
+                            <button class="btn btn-outline btn-sm" @click="addProjectStep = 'choose'">Назад</button>
+                            <button class="btn btn-success btn-sm" @click="addSection"
+                                    :disabled="!newSectionCode.trim() || !newSectionName.trim()">
+                                Создать раздел
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Шаг 3: Добавить проект (из папки) -->
+                <template v-if="addProjectStep === 'project'">
+                    <h3>Добавить проект</h3>
+
+                    <!-- Переключатель источника -->
+                    <div class="source-tabs">
+                        <button class="source-tab" :class="{active: projectSource === 'local'}"
+                                @click="projectSource = 'local'; scanFolders()">
+                            Из projects/
                         </button>
+                        <button class="source-tab" :class="{active: projectSource === 'external'}"
+                                @click="projectSource = 'external'; unregisteredFolders = []">
+                            Из другой папки
+                        </button>
+                    </div>
+
+                    <!-- Поле пути для внешней папки -->
+                    <div v-if="projectSource === 'external'" class="external-path-row">
+                        <input type="text" v-model="externalPath" class="form-input"
+                               placeholder="D:\Путь\к\папке\с\проектами"
+                               @keyup.enter="scanExternalFolder()">
+                        <button class="btn btn-primary btn-sm" @click="scanExternalFolder()"
+                                :disabled="addProjectLoading || !externalPath.trim()">
+                            Сканировать
+                        </button>
+                    </div>
+
+                    <div v-if="addProjectLoading" class="empty-state">Сканирование...</div>
+
+                    <div v-else-if="unregisteredFolders.length === 0 && projectSource === 'local'" class="empty-state">
+                        Все папки с PDF уже зарегистрированы.
+                    </div>
+
+                    <div v-else-if="unregisteredFolders.length === 0 && projectSource === 'external' && externalPath.trim()" class="empty-state">
+                        PDF-файлы не найдены в указанной папке.
+                    </div>
+
+                    <div v-else-if="unregisteredFolders.length > 0" class="add-project-list">
+                        <div v-for="f in unregisteredFolders" :key="f.folder" class="add-project-item">
+                            <div class="add-project-item__info">
+                                <div class="add-project-item__name">{{ f.folder }}</div>
+                                <div class="add-project-item__details">
+                                    <span class="stat">PDF: {{ f.pdf_files[0] }} ({{ f.pdf_size_mb }} MB)</span>
+                                    <span v-if="f.md_files.length > 0" class="stat stat--md">
+                                        MD: {{ f.md_files[0] }}
+                                    </span>
+                                    <span v-else class="stat stat--no-md">Нет MD</span>
+                                    <span v-if="f._isExternal" class="stat stat--external">Копируется в projects/</span>
+                                </div>
+                                <!-- Выбор дисциплины -->
+                                <div class="add-project-item__discipline">
+                                    <select class="discipline-select"
+                                            v-model="f._selectedDiscipline"
+                                            :disabled="addProjectLoading">
+                                        <option v-for="d in supportedDisciplines" :key="d.code" :value="d.code">
+                                            {{ d.short_name }} — {{ d.name }}
+                                        </option>
+                                    </select>
+                                    <span v-if="f._detectedDiscipline" class="discipline-auto-badge"
+                                          :style="{borderColor: getDisciplineColor(f._detectedDiscipline)}">
+                                        авто
+                                    </span>
+                                </div>
+                            </div>
+                            <button class="btn btn-success btn-sm" @click="registerProject(f.folder)"
+                                    :disabled="addProjectLoading">
+                                + Добавить
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-actions" style="margin-top:12px">
+                        <button class="btn btn-outline btn-sm" @click="addProjectStep = 'choose'">Назад</button>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- ═══ Edit Section Modal ═══ -->
+        <div v-if="showEditSection" class="modal-overlay" @click="showEditSection = false">
+            <div class="modal-content modal-edit-section" @click.stop>
+                <button class="modal-close" @click="showEditSection = false">&times;</button>
+                <h3>Редактировать раздел <span class="section-badge" :style="disciplineBadgeStyle(editSectionCode)">{{ editSectionCode }}</span></h3>
+                <div class="add-section-form">
+                    <div class="form-row">
+                        <label>Название</label>
+                        <input type="text" v-model="editSectionName" class="form-input">
+                    </div>
+                    <div class="form-row">
+                        <label>Цвет</label>
+                        <div class="color-picker-row">
+                            <input type="color" v-model="editSectionColor" class="form-color">
+                            <span class="section-badge" :style="{background: editSectionColor + '22', color: editSectionColor, border: '1px solid ' + editSectionColor}">
+                                {{ editSectionCode }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn btn-outline btn-sm btn-danger" @click="deleteSection"
+                                title="Удалить раздел (только если нет проектов)">Удалить</button>
+                        <button class="btn btn-success btn-sm" @click="saveEditSection"
+                                :disabled="!editSectionName.trim()">Сохранить</button>
                     </div>
                 </div>
             </div>
@@ -375,27 +556,7 @@
             <div class="modal-content modal-batch" @click.stop>
                 <button class="modal-close" @click="showBatchModal = false">&times;</button>
                 <h3>Запустить аудит ({{ batchAllMode ? 'все ' : '' }}{{ batchModalCount }} проектов)</h3>
-                <p class="modal-subtitle">Выберите режим и объём проверки</p>
-
-                <div class="batch-modal-section">
-                    <label class="batch-modal-label">Режим анализа</label>
-                    <div class="batch-modal-options">
-                        <label class="batch-modal-radio" :class="{ active: batchMode === 'standard' }">
-                            <input type="radio" v-model="batchMode" value="standard">
-                            <div>
-                                <strong>Стандартный</strong>
-                                <span class="batch-modal-hint">Выборочные блоки по результатам текстового анализа</span>
-                            </div>
-                        </label>
-                        <label class="batch-modal-radio" :class="{ active: batchMode === 'pro' }">
-                            <input type="radio" v-model="batchMode" value="pro">
-                            <div>
-                                <strong>PRO</strong>
-                                <span class="batch-modal-hint">Все image-блоки — максимальное покрытие</span>
-                            </div>
-                        </label>
-                    </div>
-                </div>
+                <p class="modal-subtitle">Выберите объём проверки</p>
 
                 <div class="batch-modal-section">
                     <label class="batch-modal-label">Объём проверки</label>
@@ -437,253 +598,206 @@
         <div v-if="currentView === 'project'" class="container">
             <div v-if="currentProject" class="project-detail">
 
-                <!-- === Row 1: Header (title + badges + usage) === -->
-                <div class="project-header-row">
-                    <div class="project-header-row__title">
-                        <h2>{{ currentProject.name }}</h2>
-                        <p class="subtitle">{{ currentProject.description }}
-                            <span v-if="currentProject.object" class="object-tag">· {{ currentProject.object }}</span>
-                        </p>
+                <!-- === Tab: Инфо (content) === -->
+                <div class="info-tab-content">
+
+                    <!-- Pipeline -->
+                    <div class="pipeline-detail">
+                        <div class="pipeline-stage" :class="[stepClass(currentProject.pipeline.crop_blocks), {'pipeline-stage--clickable': canStartFrom('crop_blocks')}]"
+                             @click="canStartFrom('crop_blocks') && startFromStage(currentProject.project_id, 'crop_blocks')"
+                             :title="canStartFrom('crop_blocks') ? 'Клик: запустить с этого этапа' : 'Кроп блоков'">
+                            <div class="stage-num">01</div>
+                            <div class="stage-label">Кроп</div>
+                            <div class="stage-tokens" v-if="stageTokens('crop_blocks')">{{ formatTokens(stageTokens('crop_blocks').total_tokens) }}</div>
+                        </div>
+                        <div class="pipeline-arrow">&rarr;</div>
+                        <div class="pipeline-stage" :class="[stepClass(currentProject.pipeline.text_analysis), {'pipeline-stage--clickable': canStartFrom('text_analysis')}]"
+                             @click="canStartFrom('text_analysis') && startFromStage(currentProject.project_id, 'text_analysis')"
+                             :title="canStartFrom('text_analysis') ? 'Клик: запустить с этого этапа' : 'Анализ текста'">
+                            <div class="stage-num">02</div>
+                            <div class="stage-label">Текст</div>
+                            <div class="stage-tokens" v-if="stageTokens('text_analysis')">{{ formatTokens(stageTokens('text_analysis').total_tokens) }}</div>
+                        </div>
+                        <div class="pipeline-arrow">&rarr;</div>
+                        <div class="pipeline-stage" :class="[stepClass(currentProject.pipeline.blocks_analysis), {'pipeline-stage--clickable': canStartFrom('blocks_analysis')}]"
+                             @click="canStartFrom('blocks_analysis') && startFromStage(currentProject.project_id, 'blocks_analysis')"
+                             :title="canStartFrom('blocks_analysis') ? 'Клик: запустить с этого этапа' : 'Анализ блоков'">
+                            <div class="stage-num">03</div>
+                            <div class="stage-label">Блоки</div>
+                            <div class="stage-tokens" v-if="stageTokens('blocks_analysis')">{{ formatTokens(stageTokens('blocks_analysis').total_tokens) }}</div>
+                        </div>
+                        <div class="pipeline-arrow">&rarr;</div>
+                        <div class="pipeline-stage" :class="[stepClass(currentProject.pipeline.findings), {'pipeline-stage--clickable': canStartFrom('findings')}]"
+                             @click="canStartFrom('findings') && startFromStage(currentProject.project_id, 'findings')"
+                             :title="canStartFrom('findings') ? 'Клик: запустить с этого этапа' : 'Свод замечаний'">
+                            <div class="stage-num">04</div>
+                            <div class="stage-label">Свод</div>
+                            <div class="stage-tokens" v-if="stageTokens('findings')">{{ formatTokens(stageTokens('findings').total_tokens) }}</div>
+                        </div>
+                        <div class="pipeline-arrow">&rarr;</div>
+                        <div class="pipeline-stage" :class="[stepClass(currentProject.pipeline.norms_verified), {'pipeline-stage--clickable': canStartFrom('norms_verified')}]"
+                             @click="canStartFrom('norms_verified') && startFromStage(currentProject.project_id, 'norms_verified')"
+                             :title="canStartFrom('norms_verified') ? 'Клик: запустить с этого этапа' : 'Верификация норм'">
+                            <div class="stage-num">05</div>
+                            <div class="stage-label">Нормы</div>
+                            <div class="stage-tokens" v-if="stageTokens('norms_verified')">{{ formatTokens(stageTokens('norms_verified').total_tokens) }}</div>
+                        </div>
+                        <div class="pipeline-arrow">&rarr;</div>
+                        <div class="pipeline-stage pipeline-stage--opt" :class="[stepClass(currentProject.pipeline.optimization), {'pipeline-stage--clickable': canStartFrom('optimization')}]"
+                             @click="canStartFrom('optimization') && startFromStage(currentProject.project_id, 'optimization')"
+                             :title="canStartFrom('optimization') ? 'Клик: запустить с этого этапа' : 'Оптимизация'">
+                            <div class="stage-num">OPT</div>
+                            <div class="stage-label">Оптим.</div>
+                            <div class="stage-tokens" v-if="stageTokens('optimization')">{{ formatTokens(stageTokens('optimization').total_tokens) }}</div>
+                        </div>
                     </div>
-                    <div class="project-header-row__badges" v-if="currentProject.findings_count > 0">
-                        <span v-for="(count, sev) in currentProject.findings_by_severity" :key="sev"
-                              class="sev-badge sev-badge--sm" :class="'sev-' + sevClass(sev)">
-                            {{ count }}
+
+                    <!-- Audit actions -->
+                    <div class="audit-buttons">
+                        <button class="btn btn-accent" @click="startAudit(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
+                                title="Аудит: кроп → текст → все блоки → свод → нормы">
+                            Аудит
+                        </button>
+                        <button class="btn" @click="startNormVerify(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id) || currentProject.findings_count === 0"
+                                :title="currentProject.findings_count === 0 ? 'Сначала выполните аудит' : 'Верификация нормативных ссылок'">
+                            Нормы
+                        </button>
+                        <button class="btn btn-optimization" @click="startOptimization(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
+                                title="Оптимизация: аналоги, монтаж, конструктив">
+                            Оптимизация
+                        </button>
+                        <button class="btn btn-danger" @click="cancelAudit(currentProject.project_id)"
+                                v-if="auditRunning || isProjectRunning(currentProject.project_id)">
+                            Отменить
+                        </button>
+                        <button class="btn btn-danger-outline" @click="cleanProject(currentProject.project_id)"
+                                :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
+                                title="Удалить все результаты аудита">
+                            Очистить
+                        </button>
+                    </div>
+
+                    <!-- Live Status Banner -->
+                    <div v-if="currentProjectLive && currentProjectLive.running" class="live-banner"
+                         :class="{'live-banner--stale': isClaudeStage(currentProjectLive.stage) && isHeartbeatStale(currentProject.project_id)}">
+                        <div class="spinner-lg"></div>
+                        <span v-if="isClaudeStage(currentProjectLive.stage)"
+                              class="heartbeat-dot heartbeat-dot--lg"
+                              :class="isHeartbeatStale(currentProject.project_id) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
+                        <div class="live-banner__info">
+                            <div class="live-banner__stage">
+                                {{ stageLabel(currentProjectLive.stage) }}
+                                <template v-if="isClaudeStage(currentProjectLive.stage)">
+                                    <span class="heartbeat-label"
+                                          v-if="!isHeartbeatStale(currentProject.project_id) && secondsSinceHeartbeat(currentProject.project_id) < 999">
+                                        Процесс активен
+                                    </span>
+                                    <span class="heartbeat-label heartbeat-label--stale"
+                                          v-else-if="isHeartbeatStale(currentProject.project_id)">
+                                        Claude думает...
+                                    </span>
+                                </template>
+                                <span v-else class="heartbeat-label">
+                                    Выполняется...
+                                </span>
+                            </div>
+                            <div class="live-banner__detail">
+                                <template v-if="currentProjectLive.batch_total > 0">
+                                    Пакет {{ currentProjectLive.batch_completed }} из {{ currentProjectLive.batch_total }}
+                                    ({{ Math.round(currentProjectLive.batch_completed / currentProjectLive.batch_total * 100) }}%)
+                                </template>
+                                <template v-else-if="currentProjectLive.progress_total > 0">
+                                    {{ currentProjectLive.progress_current }} / {{ currentProjectLive.progress_total }}
+                                </template>
+                                <template v-else>Выполняется...</template>
+                            </div>
+                            <div class="live-banner__eta" v-if="getHeartbeatInfo(currentProject.project_id)?.eta_sec">
+                                ETA: {{ formatETA(getHeartbeatInfo(currentProject.project_id).eta_sec) }}
+                            </div>
+                        </div>
+                        <div class="live-banner__elapsed" v-if="currentProjectLive.started_at">
+                            {{ formatElapsed(currentProjectLive.started_at) }}
+                        </div>
+                    </div>
+
+                    <!-- Retry/Skip for error stages -->
+                    <div v-if="!auditRunning && !isProjectRunning(currentProject.project_id)"
+                         class="stage-error-row">
+                        <template v-for="si in [
+                            {key: 'crop_blocks', logKey: 'crop_blocks', label: '01 Кроп'},
+                            {key: 'text_analysis', logKey: 'text_analysis', label: '02 Текст'},
+                            {key: 'blocks_analysis', logKey: 'block_analysis', label: '03 Блоки'},
+                            {key: 'findings', logKey: 'findings_merge', label: '04 Свод'},
+                            {key: 'norms_verified', logKey: 'norm_verify', label: '05 Нормы'},
+                        ]">
+                            <div v-if="currentProject.pipeline[si.key] === 'error'" class="stage-error-actions">
+                                <span class="stage-error-label">{{ si.label }}: ошибка</span>
+                                <button class="btn btn-sm btn-primary" @click="retryStage(currentProject.project_id, si.logKey)">Повторить</button>
+                                <button class="btn btn-sm" @click="skipStage(currentProject.project_id, si.logKey)">Пропустить</button>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- Block crop errors warning -->
+                    <div v-if="currentProject.pipeline.crop_blocks === 'error'" class="block-crop-warning block-crop-warning--compact">
+                        <span class="block-crop-warning__icon">&#9888;</span>
+                        <span>Не все блоки скачались. Обновите OCR-результат и перезапустите кроп.</span>
+                    </div>
+
+                    <!-- Resume -->
+                    <div v-if="resumeInfo && resumeInfo.can_resume && !auditRunning && !isProjectRunning(currentProject.project_id)"
+                         class="resume-box">
+                        <button class="btn btn-sm btn-primary" @click="resumePipeline(currentProject.project_id)">Продолжить</button>
+                        <span class="resume-label">{{ resumeInfo.stage_label }}
+                            <span v-if="resumeInfo.detail">({{ resumeInfo.detail }})</span>
                         </span>
-                        <span class="findings-total">= {{ currentProject.findings_count }}</span>
                     </div>
-                    <div class="project-header-row__usage" v-if="currentProjectUsage">
-                        <span>⚡ {{ formatTokens(currentProjectUsage.total_tokens) }}</span>
-                        <span>· ${{ formatCost(currentProjectUsage.total_cost_usd) }}</span>
-                    </div>
-                </div>
 
-                <!-- === Live Status Banner (only when audit running) === -->
-                <div v-if="currentProjectLive && currentProjectLive.running" class="live-banner"
-                     :class="{'live-banner--stale': isHeartbeatStale(currentProject.project_id)}">
-                    <div class="spinner-lg"></div>
-                    <span class="heartbeat-dot heartbeat-dot--lg"
-                          :class="isHeartbeatStale(currentProject.project_id) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
-                    <div class="live-banner__info">
-                        <div class="live-banner__stage">
-                            {{ stageLabel(currentProjectLive.stage) }}
-                            <span class="heartbeat-label"
-                                  v-if="!isHeartbeatStale(currentProject.project_id) && secondsSinceHeartbeat(currentProject.project_id) < 999">
-                                Процесс активен
-                            </span>
-                            <span class="heartbeat-label heartbeat-label--stale"
-                                  v-else-if="isHeartbeatStale(currentProject.project_id)">
-                                Claude думает...
-                            </span>
-                        </div>
-                        <div class="live-banner__detail">
-                            <template v-if="currentProjectLive.batch_total > 0">
-                                Пакет {{ currentProjectLive.batch_completed }} из {{ currentProjectLive.batch_total }}
-                                ({{ Math.round(currentProjectLive.batch_completed / currentProjectLive.batch_total * 100) }}%)
-                            </template>
-                            <template v-else-if="currentProjectLive.progress_total > 0">
-                                {{ currentProjectLive.progress_current }} / {{ currentProjectLive.progress_total }}
-                            </template>
-                            <template v-else>Выполняется...</template>
-                        </div>
-                        <div class="live-banner__eta" v-if="getHeartbeatInfo(currentProject.project_id)?.eta_sec">
-                            ETA: {{ formatETA(getHeartbeatInfo(currentProject.project_id).eta_sec) }}
-                        </div>
-                    </div>
-                    <div class="live-banner__elapsed" v-if="currentProjectLive.started_at">
-                        {{ formatElapsed(currentProjectLive.started_at) }}
-                    </div>
-                </div>
-
-                <!-- === Row 2: Pipeline (compact) === -->
-                <div class="pipeline-detail">
-                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.crop_blocks)">
-                        <div class="stage-num">01</div>
-                        <div class="stage-label">Кроп</div>
-                        <div class="stage-tokens" v-if="stageTokens('crop_blocks')">{{ formatTokens(stageTokens('crop_blocks').total_tokens) }}</div>
-                    </div>
-                    <div class="pipeline-arrow">&rarr;</div>
-                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.text_analysis)">
-                        <div class="stage-num">02</div>
-                        <div class="stage-label">Текст</div>
-                        <div class="stage-tokens" v-if="stageTokens('text_analysis')">{{ formatTokens(stageTokens('text_analysis').total_tokens) }}</div>
-                    </div>
-                    <div class="pipeline-arrow">&rarr;</div>
-                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.blocks_analysis)">
-                        <div class="stage-num">03</div>
-                        <div class="stage-label">Блоки</div>
-                        <div class="stage-tokens" v-if="stageTokens('blocks_analysis')">{{ formatTokens(stageTokens('blocks_analysis').total_tokens) }}</div>
-                    </div>
-                    <div class="pipeline-arrow">&rarr;</div>
-                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.findings)">
-                        <div class="stage-num">04</div>
-                        <div class="stage-label">Свод</div>
-                        <div class="stage-tokens" v-if="stageTokens('findings')">{{ formatTokens(stageTokens('findings').total_tokens) }}</div>
-                    </div>
-                    <div class="pipeline-arrow">&rarr;</div>
-                    <div class="pipeline-stage" :class="stepClass(currentProject.pipeline.norms_verified)">
-                        <div class="stage-num">05</div>
-                        <div class="stage-label">Нормы</div>
-                        <div class="stage-tokens" v-if="stageTokens('norms_verified')">{{ formatTokens(stageTokens('norms_verified').total_tokens) }}</div>
-                    </div>
-                    <div class="pipeline-arrow">&rarr;</div>
-                    <div class="pipeline-stage pipeline-stage--opt" :class="stepClass(currentProject.pipeline.optimization)">
-                        <div class="stage-num">OPT</div>
-                        <div class="stage-label">Оптим.</div>
-                        <div class="stage-tokens" v-if="stageTokens('optimization')">{{ formatTokens(stageTokens('optimization').total_tokens) }}</div>
-                    </div>
-                </div>
-
-                <!-- Retry/Skip for error stages (inline, compact) -->
-                <div v-if="!auditRunning && !isProjectRunning(currentProject.project_id)"
-                     class="stage-error-row">
-                    <template v-for="si in [
-                        {key: 'crop_blocks', logKey: 'crop_blocks', label: '01 Кроп'},
-                        {key: 'text_analysis', logKey: 'text_analysis', label: '02 Текст'},
-                        {key: 'blocks_analysis', logKey: 'block_analysis', label: '03 Блоки'},
-                        {key: 'findings', logKey: 'findings_merge', label: '04 Свод'},
-                        {key: 'norms_verified', logKey: 'norm_verify', label: '05 Нормы'},
-                    ]">
-                        <div v-if="currentProject.pipeline[si.key] === 'error'" class="stage-error-actions">
-                            <span class="stage-error-label">{{ si.label }}: ошибка</span>
-                            <button class="btn btn-sm btn-primary" @click="retryStage(currentProject.project_id, si.logKey)">Повторить</button>
-                            <button class="btn btn-sm" @click="skipStage(currentProject.project_id, si.logKey)">Пропустить</button>
-                        </div>
-                    </template>
-                </div>
-
-                <!-- === Row 3: Body (info + actions, two columns) === -->
-                <div class="project-body-row">
-                    <!-- Left: info cards -->
-                    <div class="project-body-row__info">
-                        <div class="info-grid info-grid--compact">
-                            <div class="info-card">
-                                <div class="info-card__icon">PDF</div>
-                                <div class="info-card__text">
-                                    <template v-if="currentProject.has_pdf">{{ currentProject.pdf_size_mb }} MB</template>
-                                    <template v-else>—</template>
-                                </div>
+                    <!-- Severity + Optimization summary -->
+                    <div v-if="currentProject.findings_count > 0 || currentProject.optimization_count > 0" class="info-tab-summary">
+                        <div v-if="currentProject.findings_count > 0" class="info-tab-summary__row">
+                            <span class="info-tab-summary__label">Замечания</span>
+                            <div class="severity-badges">
+                                <span v-for="(count, sev) in currentProject.findings_by_severity" :key="sev"
+                                      class="sev-badge" :class="'sev-' + sevClass(sev)">
+                                    {{ count }}
+                                </span>
+                                <span class="findings-total">= {{ currentProject.findings_count }}</span>
                             </div>
-                            <div class="info-card" :class="{'info-card--primary': currentProject.has_md_file}">
-                                <div class="info-card__icon">MD</div>
-                                <div class="info-card__text">
-                                    <template v-if="currentProject.has_md_file">
-                                        {{ currentProject.md_file_size_kb }} KB
-                                        <button class="btn btn-xs btn-outline" style="margin-left: 6px;"
-                                                @click="navigate('/project/' + currentProject.project_id + '/document')">Открыть</button>
-                                    </template>
-                                    <template v-else>—</template>
-                                </div>
-                            </div>
-                            <div class="info-card" v-if="currentProject.has_ocr">
-                                <div class="info-card__icon">Блоки</div>
-                                <div class="info-card__text">{{ currentProject.block_count }}</div>
-                            </div>
-                            <div class="info-card" v-if="!currentProject.has_ocr">
-                                <div class="info-card__icon">TXT</div>
-                                <div class="info-card__text">
-                                    <template v-if="currentProject.has_extracted_text">{{ currentProject.text_size_kb }} KB</template>
-                                    <template v-else>—</template>
-                                </div>
-                            </div>
-                            <div class="info-card" v-if="!currentProject.has_ocr">
-                                <div class="info-card__icon">Tiles</div>
-                                <div class="info-card__text">{{ currentProject.tile_count }} ({{ currentProject.tile_pages }} стр.)</div>
+                        </div>
+                        <div v-if="currentProject.optimization_count > 0" class="info-tab-summary__row">
+                            <span class="info-tab-summary__label">Оптимизация</span>
+                            <div class="severity-badges opt-badges">
+                                <span v-for="(count, type) in currentProject.optimization_by_type" :key="type"
+                                      class="sev-badge" :style="{ background: optTypeColor(type) + '22', color: optTypeColor(type), border: '1px solid ' + optTypeColor(type) + '40' }"
+                                      :title="optTypeLabel(type)">
+                                    {{ count }}
+                                </span>
+                                <span class="findings-total" style="color: var(--emerald)">= {{ currentProject.optimization_count }}
+                                    <template v-if="currentProject.optimization_savings_pct > 0">(−{{ currentProject.optimization_savings_pct }}%)</template>
+                                </span>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Right: audit actions -->
-                    <div class="project-body-row__actions">
-                        <div class="audit-buttons">
-                            <button class="btn btn-accent" @click="startStandardAudit(currentProject.project_id)"
-                                    :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
-                                    title="Стандартный аудит: кроп → текст → выборочные блоки → свод → нормы">
-                                Стандартный
-                            </button>
-                            <button class="btn btn-pro" @click="startProAudit(currentProject.project_id)"
-                                    :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
-                                    title="PRO: все image-блоки — 100% покрытие">
-                                PRO
-                            </button>
-                            <button class="btn" @click="startNormVerify(currentProject.project_id)"
-                                    :disabled="auditRunning || isProjectRunning(currentProject.project_id) || currentProject.findings_count === 0"
-                                    :title="currentProject.findings_count === 0 ? 'Сначала выполните аудит' : 'Верификация нормативных ссылок'">
-                                Нормы
-                            </button>
-                            <button class="btn btn-optimization" @click="startOptimization(currentProject.project_id)"
-                                    :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
-                                    title="Оптимизация: аналоги, монтаж, конструктив">
-                                Оптимизация
-                            </button>
-                            <button class="btn btn-danger" @click="cancelAudit(currentProject.project_id)"
-                                    v-if="auditRunning || isProjectRunning(currentProject.project_id)">
-                                Отменить
-                            </button>
-                            <button class="btn btn-danger-outline" @click="cleanProject(currentProject.project_id)"
-                                    :disabled="auditRunning || isProjectRunning(currentProject.project_id)"
-                                    title="Удалить все результаты аудита. PDF и MD сохраняются.">
-                                Очистить
-                            </button>
-                        </div>
-                        <!-- Resume -->
-                        <div v-if="resumeInfo && resumeInfo.can_resume && !auditRunning && !isProjectRunning(currentProject.project_id)"
-                             class="resume-box">
-                            <button class="btn btn-sm btn-primary" @click="resumePipeline(currentProject.project_id)">Продолжить</button>
-                            <span class="resume-label">{{ resumeInfo.stage_label }}
-                                <span v-if="resumeInfo.detail">({{ resumeInfo.detail }})</span>
-                            </span>
-                        </div>
-                        <div v-if="currentProject.completed_batches > 0 && currentProject.completed_batches < currentProject.total_batches">
-                            <button class="btn btn-sm" :disabled="auditRunning"
-                                    @click="startTileAudit(currentProject.project_id, currentProject.completed_batches + 1)">
-                                Продолжить с пакета {{ currentProject.completed_batches + 1 }}
-                            </button>
-                        </div>
+                    <!-- Usage -->
+                    <div v-if="currentProjectUsage && currentProjectUsage.total_tokens > 0" class="info-tab-usage">
+                        <span class="usage-icon">⚡</span>
+                        {{ formatTokens(currentProjectUsage.total_tokens) }} tok
+                        · ${{ formatCost(currentProjectUsage.total_cost_usd) }}
+                        · {{ currentProjectUsage.total_calls }} calls
                     </div>
-                </div>
 
-                <!-- Progress bar for tiles (legacy only) -->
-                <div v-if="currentProject.total_batches > 0 && !currentProject.has_ocr" class="progress-section">
-                    <div class="progress-label">
-                        Тайлы: {{ Math.round(currentProject.completed_batches / currentProject.total_batches * 100) }}%
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill"
-                             :style="{width: (currentProject.completed_batches / currentProject.total_batches * 100) + '%'}"></div>
-                    </div>
-                </div>
-
-                <!-- === Row 4: Navigation === -->
-                <div class="project-nav project-nav--compact">
-                    <button class="btn" @click="navigate('/project/' + currentProject.project_id + '/findings')"
-                            :disabled="currentProject.findings_count === 0">
-                        Замечания ({{ currentProject.findings_count }})
-                    </button>
-                    <button v-if="currentProject.has_ocr" class="btn"
-                            @click="navigate('/project/' + currentProject.project_id + '/blocks')">
-                        Блоки ({{ currentProject.block_count || 0 }})
-                    </button>
-                    <button v-else class="btn" @click="navigate('/project/' + currentProject.project_id + '/tiles')"
-                            :disabled="!currentProject.has_tiles">
-                        Тайлы ({{ currentProject.tile_count }})
-                    </button>
-                    <button class="btn btn-optimization"
-                            @click="navigate('/project/' + currentProject.project_id + '/optimization')">
-                        Оптимизация
-                    </button>
-                    <button class="btn" @click="navigate('/project/' + currentProject.project_id + '/prompts')">Промпты</button>
-                    <button class="btn" @click="navigate('/project/' + currentProject.project_id + '/log')">Лог</button>
-                    <button class="btn" @click="generateExcel()">Excel</button>
-                </div>
+                </div><!-- /info-tab-content -->
             </div>
         </div>
 
         <!-- ═══ Findings Table ═══ -->
         <div v-if="currentView === 'findings'" class="container">
             <div class="findings-page">
-                <h2>Замечания: {{ findingsData?.project_id }}</h2>
-
                 <!-- Filters -->
                 <div class="filters">
                     <select v-model="filterSeverity" class="filter-select">
@@ -709,28 +823,56 @@
                     <table class="findings-table" v-if="findingsData">
                         <thead>
                             <tr>
-                                <th>ID</th>
-                                <th>Критичность</th>
-                                <th>Лист</th>
-                                <th>Замечание</th>
-                                <th>Норма</th>
-                                <th>Рекомендация</th>
+                                <th style="width:70px">ID</th>
+                                <th style="width:110px">Критичность</th>
+                                <th style="width:160px">Лист</th>
+                                <th style="width:50%">Замечание</th>
+                                <th style="width:160px">Норма</th>
+                                <th style="width:50%">Рекомендация</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="f in filteredFindings" :key="f.id"
-                                :class="'row-' + sevClass(f.severity)">
-                                <td class="id-cell">{{ f.id }}</td>
-                                <td>
-                                    <span class="sev-badge sev-badge--sm" :class="'sev-' + sevClass(f.severity)">
-                                        {{ f.severity }}
-                                    </span>
-                                </td>
-                                <td>{{ f.sheet }}</td>
-                                <td class="desc-cell">{{ f.problem || f.finding || f.description || '' }}</td>
-                                <td class="norm-cell">{{ f.norm }}</td>
-                                <td class="rec-cell">{{ f.solution || f.recommendation || '' }}</td>
-                            </tr>
+                            <template v-for="f in filteredFindings" :key="f.id">
+                                <tr :class="['row-' + sevClass(f.severity), { 'row-expanded': expandedFindingId === f.id }]">
+                                    <td class="id-cell"
+                                        @click="toggleFindingBlocks(f.id)"
+                                        :style="{ cursor: (findingBlockMap[f.id] && findingBlockMap[f.id].length) ? 'pointer' : 'default' }">
+                                        <span class="finding-id-link">{{ f.id }}</span>
+                                        <span v-if="findingBlockMap[f.id] && findingBlockMap[f.id].length"
+                                              class="finding-blocks-count"
+                                              :title="findingBlockMap[f.id].length + ' блоков'">
+                                            {{ findingBlockMap[f.id].length }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="sev-badge sev-badge--sm" :class="'sev-' + sevClass(f.severity)">
+                                            {{ f.severity }}
+                                        </span>
+                                    </td>
+                                    <td>{{ f.sheet }}</td>
+                                    <td class="desc-cell">{{ f.problem || f.finding || f.description || '' }}</td>
+                                    <td class="norm-cell">{{ f.norm }}</td>
+                                    <td class="rec-cell">{{ f.solution || f.recommendation || '' }}</td>
+                                </tr>
+                                <!-- Раскрывающаяся полоска блоков -->
+                                <tr v-if="expandedFindingId === f.id && getFindingBlocks(f.id).length > 0"
+                                    class="finding-blocks-row">
+                                    <td colspan="6">
+                                        <div class="finding-blocks-strip">
+                                            <div v-for="b in getFindingBlocks(f.id)" :key="b.block_id"
+                                                 class="finding-block-thumb"
+                                                 @click.stop="navigateToBlock(b.block_id, b.page)"
+                                                 :title="b.ocr_label || b.block_id">
+                                                <img :src="'/api/tiles/' + currentProjectId + '/blocks/image/' + b.block_id"
+                                                     :alt="b.block_id" loading="lazy">
+                                                <div class="finding-block-thumb__label">
+                                                    <span>стр. {{ b.page }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
                         </tbody>
                     </table>
                     <div v-else class="empty-state">
@@ -744,7 +886,6 @@
         <div v-if="currentView === 'optimization'" class="container">
             <div class="optimization-page">
                 <div class="optimization-header">
-                    <h2>Оптимизация: {{ currentProject?.name || currentProjectId }}</h2>
                     <button class="btn btn-optimization"
                             @click="startOptimization(currentProjectId)"
                             :disabled="auditRunning || isProjectRunning(currentProjectId)">
@@ -756,26 +897,6 @@
 
                 <!-- Результаты -->
                 <div v-else-if="optimizationData">
-                    <!-- Meta summary -->
-                    <div class="optimization-meta">
-                        <div class="opt-meta-item">
-                            <span class="opt-meta-label">Предложений</span>
-                            <span class="opt-meta-value">{{ optimizationData.meta?.total_items || 0 }}</span>
-                        </div>
-                        <div class="opt-meta-item">
-                            <span class="opt-meta-label">Средняя экономия</span>
-                            <span class="opt-meta-value opt-savings">~{{ optimizationData.meta?.estimated_savings_pct || 0 }}%</span>
-                        </div>
-                        <div class="opt-meta-item" v-for="(count, type) in (optimizationData.meta?.by_type || {})" :key="type">
-                            <span class="opt-type-badge" :style="{ background: optTypeColor(type), color: '#fff' }">{{ optTypeLabel(type) }}</span>
-                            <span class="opt-meta-value">{{ count }}</span>
-                        </div>
-                    </div>
-
-                    <div v-if="optimizationData.meta?.top3_summary" class="optimization-top3">
-                        {{ optimizationData.meta.top3_summary }}
-                    </div>
-
                     <!-- Фильтр по типу -->
                     <div class="optimization-filters">
                         <button class="btn btn-sm" :class="{ active: !optimizationFilter }"
@@ -803,24 +924,53 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="item in filteredOptimization" :key="item.id">
-                                <td class="opt-id">{{ item.id }}</td>
-                                <td>
-                                    <span class="opt-type-badge" :style="{ background: optTypeColor(item.type), color: '#fff' }">
-                                        {{ optTypeLabel(item.type) }}
-                                    </span>
-                                </td>
-                                <td>
-                                    <div class="opt-section" v-if="item.section">{{ item.section }}</div>
-                                    {{ item.current }}
-                                </td>
-                                <td class="opt-proposed">{{ item.proposed }}</td>
-                                <td class="opt-savings-cell">
-                                    <span class="opt-savings-badge" v-if="item.savings_pct">~{{ item.savings_pct }}%</span>
-                                </td>
-                                <td class="opt-risks">{{ item.risks }}</td>
-                                <td class="opt-norm">{{ item.norm || '—' }}</td>
-                            </tr>
+                            <template v-for="item in filteredOptimization" :key="item.id">
+                                <tr :class="{ 'row-expanded': expandedOptId === item.id }">
+                                    <td class="opt-id"
+                                        @click="toggleOptBlocks(item.id)"
+                                        :style="{ cursor: (optBlockMap[item.id] && optBlockMap[item.id].length) ? 'pointer' : 'default' }">
+                                        <span class="finding-id-link">{{ item.id }}</span>
+                                        <span v-if="optBlockMap[item.id] && optBlockMap[item.id].length"
+                                              class="finding-blocks-count"
+                                              :title="optBlockMap[item.id].length + ' блоков'">
+                                            {{ optBlockMap[item.id].length }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="opt-type-badge" :style="{ background: optTypeColor(item.type), color: '#fff' }">
+                                            {{ optTypeLabel(item.type) }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="opt-section" v-if="item.section">{{ item.section }}</div>
+                                        {{ item.current }}
+                                    </td>
+                                    <td class="opt-proposed">{{ item.proposed }}</td>
+                                    <td class="opt-savings-cell">
+                                        <span class="opt-savings-badge" v-if="item.savings_pct">~{{ item.savings_pct }}%</span>
+                                    </td>
+                                    <td class="opt-risks">{{ item.risks }}</td>
+                                    <td class="opt-norm">{{ item.norm || '—' }}</td>
+                                </tr>
+                                <!-- Раскрывающаяся полоска блоков -->
+                                <tr v-if="expandedOptId === item.id && getOptBlocks(item.id).length > 0"
+                                    class="finding-blocks-row">
+                                    <td colspan="7">
+                                        <div class="finding-blocks-strip">
+                                            <div v-for="b in getOptBlocks(item.id)" :key="b.block_id"
+                                                 class="finding-block-thumb"
+                                                 @click.stop="navigateToBlock(b.block_id, b.page)"
+                                                 :title="b.ocr_label || b.block_id">
+                                                <img :src="'/api/tiles/' + currentProjectId + '/blocks/image/' + b.block_id"
+                                                     :alt="b.block_id" loading="lazy">
+                                                <div class="finding-block-thumb__label">
+                                                    <span>стр. {{ b.page }}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
                         </tbody>
                     </table>
                     <div v-else class="empty-state">
@@ -1016,9 +1166,13 @@
 
         <!-- ═══ Blocks Viewer (OCR) ═══ -->
         <div v-if="currentView === 'blocks'" class="container">
+            <!-- Warning: not all blocks downloaded -->
+            <div v-if="blockCropErrors > 0" class="block-crop-warning">
+                <span class="block-crop-warning__icon">&#9888;</span>
+                <span>Не все блоки скачались: <strong>{{ blockCropErrors }}</strong> из {{ blockTotalExpected }} — ошибка загрузки (HTTP 404).
+                Обновите OCR-результат в Chandra и перезапустите кроп.</span>
+            </div>
             <div class="tiles-page">
-                <h2>Блоки: {{ blocksProjectId }}</h2>
-
                 <!-- Page selector -->
                 <div class="page-selector">
                     <button v-for="pg in blockPages" :key="pg.page_num"
@@ -1033,6 +1187,7 @@
                 <div v-if="currentPageBlocks && currentPageBlocks.blocks.length" class="block-grid">
                     <div v-for="block in currentPageBlocks.blocks" :key="block.block_id"
                          class="block-item"
+                         :data-block-id="block.block_id"
                          :class="{'block-item--has-findings': blockFindingsCount(block.block_id) > 0,
                                   'block-item--analyzed': blockHasAnalysis(block.block_id) && blockFindingsCount(block.block_id) === 0}"
                          @click="openBlock(block)">
@@ -1059,6 +1214,7 @@
                 <!-- Split-view overlay for block -->
                 <div v-if="selectedBlock" class="tile-split-overlay" @click="selectedBlock = null">
                     <div class="tile-split-container" @click.stop>
+                        <button v-if="blockBackRoute" class="block-back-btn" @click="goBackFromBlock()" title="Назад к замечаниям">&larr; Назад</button>
                         <button class="tile-split-close" @click="selectedBlock = null">&times;</button>
 
                         <!-- Left: block image -->
@@ -1120,6 +1276,27 @@
                                 <div v-if="(!selectedBlockAnalysis.findings || selectedBlockAnalysis.findings.length === 0) && !selectedBlockAnalysis.summary"
                                      class="tile-analysis-empty">
                                     Анализ выполнен, данных мало.
+                                </div>
+
+                                <!-- Связанные F-замечания (из 03_findings) -->
+                                <div v-if="getBlockFindings(selectedBlock.block_id).length > 0"
+                                     class="tile-analysis-section tile-analysis-section--findings">
+                                    <h4>Финальные замечания ({{ getBlockFindings(selectedBlock.block_id).length }})</h4>
+                                    <div v-for="(f, i) in getBlockFindings(selectedBlock.block_id)" :key="'f-' + i"
+                                         class="tile-finding-card" :class="'tile-finding-card--' + sevClass(f.severity)">
+                                        <div class="tile-finding-card__header">
+                                            <span class="sev-badge sev-badge--sm" :class="'sev-' + sevClass(f.severity)">
+                                                {{ f.severity || 'N/A' }}
+                                            </span>
+                                            <span class="tile-finding-card__id">{{ f.id }}</span>
+                                        </div>
+                                        <div class="tile-finding-card__text">
+                                            {{ f.problem }}
+                                        </div>
+                                        <div v-if="f.norm" class="tile-finding-card__norm">
+                                            {{ f.norm }}
+                                        </div>
+                                    </div>
                                 </div>
                             </template>
 
@@ -1245,10 +1422,6 @@
                             </div>
                         </div>
                     </div>
-                    <div class="prompts-title-block">
-                        <h2>Промпты проекта: {{ promptsProjectId }}</h2>
-                        <p class="subtitle">Промпты отправляемые Claude для каждого этапа анализа. Можно редактировать.</p>
-                    </div>
                 </div>
 
                 <div v-if="promptsLoading" class="empty-state">Загрузка промптов...</div>
@@ -1295,7 +1468,6 @@
         <!-- ═══ Live Log ═══ -->
         <div v-if="currentView === 'log'" class="container">
             <div class="log-page">
-                <h2>Лог аудита: {{ decodeURIComponent(logProjectId) }}</h2>
                 <div class="log-controls">
                     <button class="btn btn-sm" @click="clearLog">Очистить</button>
                     <label><input type="checkbox" v-model="logAutoScroll"> Автоскролл</label>
@@ -1318,19 +1490,25 @@
                 </div>
                 <!-- Heartbeat bar under log -->
                 <div v-if="isProjectRunning(logProjectId)" class="log-heartbeat"
-                     :class="{'log-heartbeat--stale': isHeartbeatStale(logProjectId)}">
-                    <span class="heartbeat-dot"
+                     :class="{'log-heartbeat--stale': isClaudeStage(getRunningStage(logProjectId)) && isHeartbeatStale(logProjectId)}">
+                    <span v-if="isClaudeStage(getRunningStage(logProjectId))"
+                          class="heartbeat-dot"
                           :class="isHeartbeatStale(logProjectId) ? 'heartbeat-dot--warning' : 'heartbeat-dot--ok'"></span>
-                    <span v-if="!isHeartbeatStale(logProjectId) && secondsSinceHeartbeat(logProjectId) < 999">
-                        Процесс активен — последний heartbeat {{ secondsSinceHeartbeat(logProjectId) }} сек назад
-                    </span>
-                    <span v-else-if="isHeartbeatStale(logProjectId)">
-                        Claude думает... (нет вывода {{ secondsSinceHeartbeat(logProjectId) }} сек)
-                    </span>
+                    <template v-if="isClaudeStage(getRunningStage(logProjectId))">
+                        <span v-if="!isHeartbeatStale(logProjectId) && secondsSinceHeartbeat(logProjectId) < 999">
+                            Процесс активен — последний heartbeat {{ secondsSinceHeartbeat(logProjectId) }} сек назад
+                        </span>
+                        <span v-else-if="isHeartbeatStale(logProjectId)">
+                            Claude думает... (нет вывода {{ secondsSinceHeartbeat(logProjectId) }} сек)
+                        </span>
+                        <span v-else>
+                            Ожидание heartbeat...
+                        </span>
+                    </template>
                     <span v-else>
-                        Ожидание heartbeat...
+                        Выполняется...
                     </span>
-                    <span class="log-heartbeat__eta" v-if="getHeartbeatInfo(logProjectId)?.eta_sec">
+                    <span class="log-heartbeat__eta" v-if="isClaudeStage(getRunningStage(logProjectId)) && getHeartbeatInfo(logProjectId)?.eta_sec">
                         ETA: {{ formatETA(getHeartbeatInfo(logProjectId).eta_sec) }}
                     </span>
                 </div>
@@ -1338,6 +1516,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js?v=16"></script>
+    <script src="/static/js/app.js?v=35"></script>
 </body>
 </html>
