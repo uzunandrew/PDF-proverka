@@ -38,6 +38,9 @@ Desktop.ini
 # === Temporary ===
 *.tmp
 *.bak
+*_temp.py
+check_*.py
+find_sections*.py
 
 # === Keep project_info.json and project structure ===
 # (PDF and _output are ignored, but config files are tracked)
