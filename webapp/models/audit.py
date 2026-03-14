@@ -20,6 +20,7 @@ class AuditStage(str, Enum):
     TEXT_ANALYSIS = "text_analysis"
     BLOCK_ANALYSIS = "block_analysis"
     FINDINGS_MERGE = "findings_merge"
+    FINDINGS_REVIEW = "findings_review"
 
 
 class JobStatus(str, Enum):

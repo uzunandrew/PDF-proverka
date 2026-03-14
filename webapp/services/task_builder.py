@@ -3,9 +3,12 @@
 Подготовка текста промтов с подстановкой плейсхолдеров и инъекцией дисциплин.
 """
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from webapp.config import (
     BASE_DIR, PROJECTS_DIR,
@@ -13,6 +16,7 @@ from webapp.config import (
     OPTIMIZATION_TASK_TEMPLATE,
     TEXT_ANALYSIS_TASK_TEMPLATE, BLOCK_ANALYSIS_TASK_TEMPLATE,
     FINDINGS_MERGE_TASK_TEMPLATE,
+    FINDINGS_CRITIC_TASK_TEMPLATE, FINDINGS_CORRECTOR_TASK_TEMPLATE,
 )
 from webapp.services.cli_utils import load_template
 from webapp.services import discipline_service
@@ -219,7 +223,12 @@ def prepare_norm_verify_task(
     project_id: str,
     project_info: Optional[dict] = None,
 ) -> str:
-    """Подготовить задачу для верификации нормативных ссылок."""
+    """Подготовить задачу для верификации нормативных ссылок.
+
+    norms_list_text — отформатированная LLM-работа (unknown нормы + параграфы).
+    Подставляется в плейсхолдер {LLM_WORK}.
+    Для обратной совместимости также подставляется в {NORMS_LIST} (если есть).
+    """
     template = load_template(NORM_VERIFY_TASK_TEMPLATE)
     template = _inject_discipline(template, project_info or {})
 
@@ -230,6 +239,7 @@ def prepare_norm_verify_task(
         .replace("{PROJECT_ID}", project_id)
         .replace("{PROJECT_PATH}", project_path)
         .replace("{BASE_DIR}", str(BASE_DIR))
+        .replace("{LLM_WORK}", norms_list_text)
         .replace("{NORMS_LIST}", norms_list_text)
     )
     return task
@@ -313,6 +323,12 @@ def _extract_page_context_for_blocks(
     if not block_ids_set and not target_pages:
         return ""
 
+    # Два режима релевантности страниц:
+    # 1) target_pages задан → фильтр по номерам страниц (основной путь)
+    # 2) target_pages пуст → "ленивый" режим: страница релевантна,
+    #    если на ней встретится IMAGE-блок из block_ids_set
+    filter_by_pages = bool(target_pages)
+
     # Парсим MD постранично
     # Структура: ## СТРАНИЦА N → метаданные → ### BLOCK [TEXT/IMAGE]: ID
     pages: dict[int, dict] = {}  # page_num → {meta, texts, images}
@@ -322,12 +338,23 @@ def _extract_page_context_for_blocks(
     current_block_id = ""
     current_block_lines: list[str] = []
     current_block_relevant = False  # для IMAGE — только если block_id в пакете
+    # Буфер для ленивого режима: накапливаем блоки до определения релевантности
+    _lazy_buffer: list[str] = []  # метаданные + TEXT-блоки до первого совпадения
+
+    def _ensure_page():
+        """Создать запись страницы если её ещё нет."""
+        if current_page_num not in pages:
+            pages[current_page_num] = {
+                "num": current_page_num,
+                "meta": [],
+                "texts": [],
+                "images": [],
+            }
 
     def _flush_block():
         """Сохранить накопленный блок в структуру страницы."""
         nonlocal current_block_type, current_block_lines, current_block_relevant
-        if not current_block_type or current_page_num not in pages:
-            current_block_type = None
+        if not current_block_type:
             current_block_lines = []
             return
 
@@ -337,17 +364,36 @@ def _extract_page_context_for_blocks(
             current_block_lines = []
             return
 
-        page = pages[current_page_num]
-        if current_block_type == "text":
-            # Пропускаем блоки с ошибками и пустые
+        if current_page_num in pages:
+            # Страница уже активирована — пишем напрямую
+            page = pages[current_page_num]
+            if current_block_type == "text":
+                if "[Ошибка" not in text and "*(нет данных)*" not in text:
+                    page["texts"].append(text)
+            elif current_block_type == "image" and current_block_relevant:
+                page["images"].append(text)
+        elif not filter_by_pages and current_block_type == "text":
+            # Ленивый режим: страница ещё не активирована — TEXT в буфер
             if "[Ошибка" not in text and "*(нет данных)*" not in text:
-                page["texts"].append(text)
-        elif current_block_type == "image" and current_block_relevant:
-            page["images"].append(text)
+                _lazy_buffer.append(text)
 
         current_block_type = None
         current_block_lines = []
         current_block_relevant = False
+
+    def _flush_lazy_buffer():
+        """Перенести буфер ленивого режима в структуру страницы."""
+        nonlocal _lazy_buffer
+        if not _lazy_buffer or current_page_num not in pages:
+            _lazy_buffer = []
+            return
+        page = pages[current_page_num]
+        for item in _lazy_buffer:
+            if item.startswith("**Лист:**") or item.startswith("**Наименование листа:**"):
+                page["meta"].append(item)
+            else:
+                page["texts"].append(item)
+        _lazy_buffer = []
 
     for line in content.split("\n"):
         # Начало новой страницы
@@ -357,14 +403,14 @@ def _extract_page_context_for_blocks(
                 current_page_num = int(line.split("СТРАНИЦА")[1].strip())
             except (ValueError, IndexError):
                 current_page_num = 0
-            current_page_relevant = current_page_num in target_pages
-            if current_page_relevant and current_page_num not in pages:
-                pages[current_page_num] = {
-                    "num": current_page_num,
-                    "meta": [],
-                    "texts": [],
-                    "images": [],
-                }
+            if filter_by_pages:
+                current_page_relevant = current_page_num in target_pages
+                if current_page_relevant:
+                    _ensure_page()
+            else:
+                # Ленивый режим: пока не знаем, релевантна ли страница
+                current_page_relevant = True  # парсим всё, но в буфер
+                _lazy_buffer = []
             continue
 
         if not current_page_relevant:
@@ -372,8 +418,11 @@ def _extract_page_context_for_blocks(
 
         # Метаданные страницы (Лист, Наименование листа)
         if line.startswith("**Лист:**") or line.startswith("**Наименование листа:**"):
-            if current_page_num in pages:
-                pages[current_page_num]["meta"].append(line)
+            if filter_by_pages:
+                if current_page_num in pages:
+                    pages[current_page_num]["meta"].append(line)
+            else:
+                _lazy_buffer.append(line)
             continue
 
         # Начало TEXT-блока
@@ -381,7 +430,7 @@ def _extract_page_context_for_blocks(
             _flush_block()
             current_block_type = "text"
             current_block_id = line.split(":", 1)[-1].strip()
-            current_block_lines = []
+            current_block_lines = [line]
             continue
 
         # Начало IMAGE-блока
@@ -391,6 +440,10 @@ def _extract_page_context_for_blocks(
             current_block_type = "image"
             current_block_id = bid
             current_block_relevant = bid in block_ids_set
+            # Ленивый режим: при первом совпадении — активируем страницу
+            if not filter_by_pages and current_block_relevant:
+                _ensure_page()
+                _flush_lazy_buffer()
             current_block_lines = [line]
             continue
 
@@ -402,10 +455,21 @@ def _extract_page_context_for_blocks(
         # Накапливаем строки текущего блока
         if current_block_type:
             current_block_lines.append(line)
+        elif not filter_by_pages and current_block_type is None:
+            # Ленивый режим: строки вне блоков (между метаданными и блоками)
+            pass
 
     _flush_block()  # последний блок
 
     if not pages:
+        if block_ids_set:
+            logger.warning(
+                "MD-контекст пуст для %d блоков (block_ids: %s). "
+                "Возможно, формат MD изменился — проверьте префиксы "
+                "'## СТРАНИЦА ', '### BLOCK [TEXT]:', '### BLOCK [IMAGE]:'",
+                len(block_ids_set),
+                ", ".join(list(block_ids_set)[:5]),
+            )
         return ""
 
     # Формируем контекст: по страницам, в порядке возрастания
@@ -439,12 +503,159 @@ def _extract_page_context_for_blocks(
     return "\n\n---\n\n".join(parts)
 
 
+def _extract_page_to_sheet_map(md_file_path: str) -> dict[int, str]:
+    """Извлечь маппинг PDF-страница → номер листа из MD-файла.
+
+    Парсит строки '**Лист:** N' внутри '## СТРАНИЦА M'.
+    Возвращает {pdf_page: sheet_number_str}, например {5: "1 (из 15)", 6: "2"}.
+    """
+    md_path = Path(md_file_path)
+    if not md_path.exists() or md_file_path == "(нет)":
+        return {}
+
+    try:
+        content = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    mapping: dict[int, str] = {}
+    current_page = 0
+
+    for line in content.split("\n"):
+        if line.startswith("## СТРАНИЦА "):
+            try:
+                current_page = int(line.split("СТРАНИЦА")[1].strip())
+            except (ValueError, IndexError):
+                current_page = 0
+        elif line.startswith("**Лист:**") and current_page > 0:
+            sheet_val = line.replace("**Лист:**", "").strip()
+            if sheet_val:
+                mapping[current_page] = sheet_val
+
+    return mapping
+
+
 def _extract_image_context_for_blocks(md_file_path: str, block_ids: list[str]) -> str:
     """Legacy wrapper — вызывает новую функцию без привязки к страницам.
 
     Используется только если нет информации о страницах (fallback).
     """
     return _extract_page_context_for_blocks(md_file_path, block_ids, [])
+
+
+def _load_document_graph(project_id: str) -> dict | None:
+    """Загрузить document_graph.json если он существует."""
+    graph_path = resolve_project_dir(project_id) / "_output" / "document_graph.json"
+    if not graph_path.exists():
+        return None
+    try:
+        return json.loads(graph_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _build_structured_block_context(
+    graph: dict,
+    block_ids: list[str],
+    block_pages: list[int],
+) -> str:
+    """Построить структурированный per-block контекст из document_graph.
+
+    Вместо «общего контекста страницы» формирует пакет для КАЖДОГО блока:
+    - Метаданные страницы (лист, наименование)
+    - Соседний текст (text_blocks той же страницы)
+    - OCR-описание этого конкретного блока
+    - Другие image-блоки на той же странице (для межблочной сверки)
+
+    Типичный объём: 3-10 KB (аналогично _extract_page_context_for_blocks).
+    """
+    block_ids_set = set(block_ids)
+    target_pages = set(block_pages)
+
+    # Индекс страниц графа
+    pages_index: dict[int, dict] = {}
+    for page in graph.get("pages", []):
+        pages_index[page["page"]] = page
+
+    # Определяем релевантные страницы (либо target_pages, либо по block_ids)
+    relevant_pages: set[int] = set()
+    if target_pages:
+        relevant_pages = target_pages
+    else:
+        for page_num, page in pages_index.items():
+            for img in page.get("image_blocks", []):
+                if img["id"] in block_ids_set:
+                    relevant_pages.add(page_num)
+
+    if not relevant_pages:
+        return ""
+
+    parts = []
+
+    for page_num in sorted(relevant_pages):
+        page = pages_index.get(page_num)
+        if not page:
+            continue
+
+        # Собираем per-block контексты для блоков этого пакета на этой странице
+        page_block_ids = [
+            img["id"] for img in page.get("image_blocks", [])
+            if img["id"] in block_ids_set
+        ]
+
+        if not page_block_ids and not target_pages:
+            continue
+
+        # Заголовок страницы
+        section_lines = [f"## СТРАНИЦА {page_num}"]
+        if page.get("sheet_no"):
+            section_lines.append(f"**Лист:** {page['sheet_no']}")
+        if page.get("sheet_name"):
+            section_lines.append(f"**Наименование листа:** {page['sheet_name']}")
+
+        # Текст на странице (общий для всех блоков страницы)
+        text_blocks = page.get("text_blocks", [])
+        if text_blocks:
+            section_lines.append("")
+            section_lines.append("### Текст на странице:")
+            for tb in text_blocks:
+                section_lines.append(tb["text"])
+                section_lines.append("")
+
+        # Per-block пакеты
+        if page_block_ids:
+            section_lines.append("")
+            section_lines.append("### Блоки этого пакета:")
+            for bid in page_block_ids:
+                # Найти OCR-описание этого блока
+                img_entry = next(
+                    (img for img in page.get("image_blocks", []) if img["id"] == bid),
+                    None,
+                )
+                section_lines.append(f"")
+                section_lines.append(f"#### block_id: {bid}")
+                if img_entry:
+                    if img_entry.get("type"):
+                        section_lines.append(f"**Тип:** {img_entry['type']}")
+                    if img_entry.get("ocr"):
+                        section_lines.append(f"**OCR-описание:**")
+                        section_lines.append(img_entry["ocr"])
+
+            # Другие блоки на этой странице (не в текущем пакете)
+            other_blocks = [
+                img for img in page.get("image_blocks", [])
+                if img["id"] not in block_ids_set
+            ]
+            if other_blocks:
+                section_lines.append("")
+                section_lines.append("### Другие блоки на этой странице:")
+                for ob in other_blocks:
+                    type_info = f" ({ob['type']})" if ob.get("type") else ""
+                    section_lines.append(f"- {ob['id']}{type_info}")
+
+        parts.append("\n".join(section_lines))
+
+    return "\n\n---\n\n".join(parts)
 
 
 # ─── Анализ пакета image-блоков (OCR-пайплайн) ───
@@ -464,27 +675,40 @@ def prepare_block_batch_task(
     batch_id = batch_data["batch_id"]
     blocks = batch_data.get("blocks", [])
 
-    # Формируем список блоков
+    _, output_path = _get_project_paths(project_id)
+    md_file_path = _get_md_file_path(project_info, project_id)
+
+    # Маппинг PDF-страница → номер листа (для grounding)
+    page_to_sheet = _extract_page_to_sheet_map(md_file_path)
+
+    # Формируем список блоков с указанием и страницы PDF, и листа документа
     block_lines = []
     for block in blocks:
         block_path = str(
             resolve_project_dir(project_id) / "_output" / "blocks" / block["file"]
         )
+        pdf_page = block.get("page", "?")
+        sheet_info = page_to_sheet.get(pdf_page, "")
+        sheet_suffix = f", Лист {sheet_info}" if sheet_info else ""
         block_lines.append(
-            f"- `{block_path}` (стр. {block.get('page', '?')}, "
+            f"- `{block_path}` (стр. PDF {pdf_page}{sheet_suffix}, "
             f"block_id: {block['block_id']}, "
             f"OCR: {block.get('ocr_label', 'image')})"
         )
 
-    _, output_path = _get_project_paths(project_id)
-    md_file_path = _get_md_file_path(project_info, project_id)
-
-    # Извлекаем inline MD-контекст: текст страниц + IMAGE-описания блоков
+    # Извлекаем inline контекст: приоритет document_graph → fallback raw MD
     batch_block_ids = [b["block_id"] for b in blocks]
     batch_pages = [b["page"] for b in blocks if b.get("page")]
-    md_context = _extract_page_context_for_blocks(
-        md_file_path, batch_block_ids, batch_pages
-    )
+
+    graph = _load_document_graph(project_id)
+    if graph:
+        md_context = _build_structured_block_context(
+            graph, batch_block_ids, batch_pages
+        )
+    else:
+        md_context = _extract_page_context_for_blocks(
+            md_file_path, batch_block_ids, batch_pages
+        )
 
     template = _inject_discipline(template, project_info)
 
@@ -499,6 +723,7 @@ def prepare_block_batch_task(
         .replace("{BLOCK_LIST}", "\n".join(block_lines))
         .replace("{MD_FILE_PATH}", md_file_path)
         .replace("{BLOCK_MD_CONTEXT}", md_context if md_context else "(нет IMAGE-описаний для блоков этого пакета)")
+        .replace("{SECTION}", (project_info or {}).get("section", "EM"))
     )
     return task
 
@@ -623,6 +848,42 @@ def prepare_findings_merge_task(
             f"`{compact_path}` *(уже включено выше)*",
         )
 
+    return task
+
+
+# ─── Critic + Corrector (проверка замечаний) ───
+
+def prepare_findings_critic_task(
+    project_info: dict,
+    project_id: str,
+) -> str:
+    """Подготовить задачу для критической проверки замечаний."""
+    template = load_template(FINDINGS_CRITIC_TASK_TEMPLATE)
+
+    _, output_path = _get_project_paths(project_id)
+
+    task = (
+        template
+        .replace("{PROJECT_ID}", project_id)
+        .replace("{OUTPUT_PATH}", output_path)
+    )
+    return task
+
+
+def prepare_findings_corrector_task(
+    project_info: dict,
+    project_id: str,
+) -> str:
+    """Подготовить задачу для корректировки замечаний по вердиктам критика."""
+    template = load_template(FINDINGS_CORRECTOR_TASK_TEMPLATE)
+
+    _, output_path = _get_project_paths(project_id)
+
+    task = (
+        template
+        .replace("{PROJECT_ID}", project_id)
+        .replace("{OUTPUT_PATH}", output_path)
+    )
     return task
 
 

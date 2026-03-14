@@ -226,6 +226,200 @@ def analyze_md_pages(md_path):
     return pages
 
 
+def build_document_graph(md_path, output_dir):
+    """
+    Преобразует MD-файл в структурированный Document Knowledge Graph.
+
+    Парсит MD построчно, извлекая для каждой страницы:
+    - sheet_no, sheet_name (метаданные из штампа)
+    - text_blocks [{id, text}] — полный текст каждого TEXT-блока
+    - image_blocks [{id, type, ocr}] — OCR-описания IMAGE-блоков
+
+    Результат сохраняется в _output/document_graph.json.
+    Обогащается файлами блоков после blocks.py crop (enrich_document_graph).
+
+    Returns:
+        dict: document_graph или None при ошибке
+    """
+    if not os.path.exists(md_path):
+        return None
+
+    pages = []
+    pages_by_num = {}  # page_num → index in pages[]
+
+    current_page_num = 0
+    current_page = None
+    current_block_type = None  # "text" | "image"
+    current_block_id = ""
+    current_block_lines = []
+    current_image_type = None
+
+    def _flush_block():
+        nonlocal current_block_type, current_block_lines, current_block_id, current_image_type
+        if not current_block_type or not current_page:
+            current_block_type = None
+            current_block_lines = []
+            current_block_id = ""
+            current_image_type = None
+            return
+
+        text = "\n".join(current_block_lines).strip()
+
+        if current_block_type == "text" and text:
+            # Пропускаем ошибки и пустые блоки
+            if "[Ошибка" not in text and "*(нет данных)*" not in text:
+                current_page["text_blocks"].append({
+                    "id": current_block_id,
+                    "text": text,
+                })
+
+        elif current_block_type == "image":
+            # Извлекаем тип из OCR-описания если ещё не определён
+            img_type = current_image_type
+            entry = {
+                "id": current_block_id,
+                "type": img_type,
+                "ocr": text if text else None,
+                # Обогащаются после blocks.py crop:
+                "file": None,
+                "size_kb": None,
+            }
+            current_page["image_blocks"].append(entry)
+
+        current_block_type = None
+        current_block_lines = []
+        current_block_id = ""
+        current_image_type = None
+
+    with open(md_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+
+            # Начало новой страницы
+            page_match = re.match(r'^## СТРАНИЦА\s+(\d+)', line)
+            if page_match:
+                _flush_block()
+                current_page_num = int(page_match.group(1))
+                current_page = {
+                    "page": current_page_num,
+                    "sheet_no": None,
+                    "sheet_name": None,
+                    "text_blocks": [],
+                    "image_blocks": [],
+                }
+                pages.append(current_page)
+                pages_by_num[current_page_num] = len(pages) - 1
+                continue
+
+            if current_page is None:
+                continue
+
+            # Метаданные страницы
+            if line.startswith("**Лист:**"):
+                current_page["sheet_no"] = line.replace("**Лист:**", "").strip()
+                continue
+            if line.startswith("**Наименование листа:**"):
+                current_page["sheet_name"] = line.replace("**Наименование листа:**", "").strip()
+                continue
+
+            # Начало TEXT-блока
+            if line.startswith("### BLOCK [TEXT]:"):
+                _flush_block()
+                current_block_type = "text"
+                current_block_id = line.split(":", 1)[-1].strip()
+                current_block_lines = []
+                continue
+
+            # Начало IMAGE-блока
+            if line.startswith("### BLOCK [IMAGE]:"):
+                _flush_block()
+                current_block_type = "image"
+                current_block_id = line.split(":", 1)[-1].strip()
+                current_block_lines = []
+                current_image_type = None
+                continue
+
+            # Любой другой блок — сбрасываем
+            if line.startswith("### BLOCK "):
+                _flush_block()
+                continue
+
+            # Тип изображения внутри IMAGE-блока
+            if current_block_type == "image":
+                type_match = re.match(
+                    r'^\*\*\[ИЗОБРАЖЕНИЕ\]\*\*\s*\|\s*Тип:\s*([^|]+)', line
+                )
+                if type_match:
+                    current_image_type = type_match.group(1).strip()
+
+            # Накапливаем строки текущего блока
+            if current_block_type:
+                current_block_lines.append(line)
+
+    _flush_block()  # последний блок
+
+    graph = {
+        "version": 1,
+        "total_pages": len(pages),
+        "total_text_blocks": sum(len(p["text_blocks"]) for p in pages),
+        "total_image_blocks": sum(len(p["image_blocks"]) for p in pages),
+        "pages": pages,
+    }
+
+    # Сохраняем
+    os.makedirs(output_dir, exist_ok=True)
+    graph_path = os.path.join(output_dir, "document_graph.json")
+    with open(graph_path, "w", encoding="utf-8") as f:
+        json.dump(graph, f, ensure_ascii=False, indent=2)
+
+    print(f"  [GRAPH] document_graph.json: {len(pages)} страниц, "
+          f"{graph['total_text_blocks']} текст., {graph['total_image_blocks']} граф.")
+    return graph
+
+
+def enrich_document_graph(output_dir):
+    """
+    Обогатить document_graph.json данными из blocks/index.json.
+
+    Добавляет file и size_kb к image_blocks по совпадению block_id.
+    Вызывается после blocks.py crop.
+    """
+    graph_path = os.path.join(output_dir, "document_graph.json")
+    index_path = os.path.join(output_dir, "blocks", "index.json")
+
+    if not os.path.exists(graph_path) or not os.path.exists(index_path):
+        return
+
+    with open(graph_path, "r", encoding="utf-8") as f:
+        graph = json.load(f)
+    with open(index_path, "r", encoding="utf-8") as f:
+        index = json.load(f)
+
+    # Построить маппинг block_id → данные из index
+    index_map = {}
+    for b in index.get("blocks", []):
+        bid = b.get("block_id", "")
+        if bid:
+            index_map[bid] = b
+
+    enriched = 0
+    for page in graph.get("pages", []):
+        for img_block in page.get("image_blocks", []):
+            bid = img_block.get("id", "")
+            if bid in index_map:
+                idx_entry = index_map[bid]
+                img_block["file"] = idx_entry.get("file")
+                img_block["size_kb"] = idx_entry.get("size_kb")
+                enriched += 1
+
+    graph["blocks_enriched"] = enriched
+
+    with open(graph_path, "w", encoding="utf-8") as f:
+        json.dump(graph, f, ensure_ascii=False, indent=2)
+
+    print(f"  [GRAPH] Обогащено {enriched} блоков данными из index.json")
+
+
 def auto_configure_tiles_from_md(pdf_path, md_pages, quality="standard"):
     """
     Конфигурация тайлов на основе MD-анализа:
@@ -572,6 +766,9 @@ def process(project_dir, full_pages=False, force=False, quality="standard"):
     }
     save_project_info(project_dir, info)
     print(f"  [OK] MD — первичный источник текста")
+
+    # ── Step 1: Build Document Knowledge Graph ──
+    build_document_graph(md_path, out_dir)
 
     # ── Step 2: Configure tiles ──
     tile_cfg = info.get("tile_config", {})

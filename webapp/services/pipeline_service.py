@@ -438,7 +438,7 @@ class PipelineManager:
         if killed:
             print(f"[{project_id}] Убито {killed} зомби-процессов от предыдущего запуска")
 
-        valid_stages = ["prepare", "text_analysis", "block_analysis", "findings_merge", "norm_verify", "excel"]
+        valid_stages = ["prepare", "text_analysis", "block_analysis", "findings_merge", "findings_review", "norm_verify", "excel"]
         if stage not in valid_stages:
             raise RuntimeError(f"Неизвестный этап: {stage}")
 
@@ -456,6 +456,7 @@ class PipelineManager:
             "text_analysis": "Анализ текста",
             "block_analysis": "Анализ блоков",
             "findings_merge": "Свод замечаний",
+            "findings_review": "Проверка замечаний (Critic+Corrector)",
             "norm_verify": "Верификация норм",
             "excel": "Excel-отчёт",
         }
@@ -524,7 +525,7 @@ class PipelineManager:
                 normalized = "findings_merge"
 
             # Порядок этапов OCR-пайплайна (без дублей)
-            ocr_stages = ["prepare", "text_analysis", "block_analysis", "findings_merge", "norm_verify", "excel"]
+            ocr_stages = ["prepare", "text_analysis", "block_analysis", "findings_merge", "findings_review", "norm_verify", "excel"]
             start_idx = ocr_stages.index(normalized) if normalized in ocr_stages else 0
 
             await self._log(
@@ -799,7 +800,9 @@ class PipelineManager:
 
             # ═══ ЭТАП 5: Свод замечаний (Claude) ═══
             if start_idx <= 3:
-                self._clean_stage_files(pid, ["03_findings.json"])
+                self._clean_stage_files(pid, [
+                    "03_findings.json", "03_findings_review.json", "03_findings_pre_review.json",
+                ])
                 self._reset_job_progress(job)
                 job.stage = AuditStage.FINDINGS_MERGE
                 job.status = JobStatus.RUNNING
@@ -838,10 +841,22 @@ class PipelineManager:
                 self.active_jobs[pid] = job
                 self._tasks[pid] = asyncio.current_task()
 
+            # ═══ ЭТАП 5.5: Critic + Corrector ═══
+            if start_idx <= 4:
+                findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
+                if findings_path.exists():
+                    await self._run_findings_review(job, project_info)
+
+                    if job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
+                        return
+
+                    self.active_jobs[pid] = job
+                    self._tasks[pid] = asyncio.current_task()
+
             # ═══ ЭТАП 6: Верификация норм ═══
             if start_idx <= 4:
                 self._clean_stage_files(pid, [
-                    "03a_norms_verified.json", "norm_checks.json",
+                    "03a_norms_verified.json", "norm_checks.json", "norm_checks_llm.json",
                 ])
                 self._reset_job_progress(job)
                 findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
@@ -1366,7 +1381,7 @@ class PipelineManager:
 
         # Очистка старых результатов верификации
         self._clean_stage_files(project_id, [
-            "03a_norms_verified.json", "norm_checks.json",
+            "03a_norms_verified.json", "norm_checks.json", "norm_checks_llm.json",
         ])
 
         job = AuditJob(
@@ -1381,12 +1396,113 @@ class PipelineManager:
         self._tasks[project_id] = task
         return job
 
+    async def _run_findings_review(self, job: AuditJob, project_info: dict):
+        """
+        Critic + Corrector: проверка и корректировка замечаний.
+
+        1. Critic проверяет каждое F-замечание (evidence, grounding, page/sheet)
+        2. Если есть отрицательные вердикты — Corrector исправляет
+        """
+        pid = job.project_id
+        output_dir = resolve_project_dir(pid) / "_output"
+
+        # ── Critic ──
+        self._reset_job_progress(job)
+        job.stage = AuditStage.FINDINGS_REVIEW
+        job.status = JobStatus.RUNNING
+        self._update_pipeline_log(pid, "findings_critic", "running")
+        print(f"[{pid}] ═══ ЭТАП 6.5a: Critic (проверка замечаний) ═══")
+        await self._log(job, "═══ ЭТАП 6.5a: Critic — проверка обоснованности замечаний ═══")
+
+        can_go = await self._check_before_launch(job)
+        if not can_go:
+            await self._log(job, "Rate limit: ожидание превышено или отменено", "warn")
+            return
+
+        exit_code, output, cli_result = await claude_runner.run_findings_critic(
+            project_info, pid,
+            on_output=lambda msg: self._log(job, msg),
+        )
+        self._record_cli_usage(job, cli_result, "findings_critic")
+
+        if claude_runner.is_cancelled(exit_code):
+            job.status = JobStatus.CANCELLED
+            return
+
+        if exit_code != 0:
+            self._update_pipeline_log(pid, "findings_critic", "error",
+                                       error=f"Код {exit_code}")
+            await self._log(job, f"Critic: код {exit_code}, пропуск корректировки", "warn")
+            return
+
+        self._update_pipeline_log(pid, "findings_critic", "done", message="OK")
+
+        # Проверяем: нужен ли Corrector?
+        review_path = output_dir / "03_findings_review.json"
+        if not review_path.exists():
+            await self._log(job, "03_findings_review.json не создан — пропуск Corrector", "warn")
+            return
+
+        try:
+            review_data = json.loads(review_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            await self._log(job, "Ошибка чтения 03_findings_review.json", "warn")
+            return
+
+        verdicts = review_data.get("meta", {}).get("verdicts", {})
+        total_pass = verdicts.get("pass", 0)
+        total_reviewed = review_data.get("meta", {}).get("total_reviewed", 0)
+        total_issues = total_reviewed - total_pass
+
+        await self._log(
+            job,
+            f"Critic: {total_reviewed} проверено, {total_pass} pass, {total_issues} проблем",
+        )
+
+        if total_issues == 0:
+            await self._log(job, "Все замечания обоснованы — Corrector не требуется")
+            return
+
+        # ── Corrector ──
+        self._update_pipeline_log(pid, "findings_corrector", "running")
+        print(f"[{pid}] ═══ ЭТАП 6.5b: Corrector (корректировка замечаний) ═══")
+        await self._log(
+            job,
+            f"═══ ЭТАП 6.5b: Corrector — корректировка {total_issues} замечаний ═══",
+        )
+
+        can_go = await self._check_before_launch(job)
+        if not can_go:
+            await self._log(job, "Rate limit: ожидание превышено или отменено", "warn")
+            return
+
+        exit_code, output, cli_result = await claude_runner.run_findings_corrector(
+            project_info, pid,
+            on_output=lambda msg: self._log(job, msg),
+        )
+        self._record_cli_usage(job, cli_result, "findings_corrector")
+
+        if claude_runner.is_cancelled(exit_code):
+            job.status = JobStatus.CANCELLED
+            return
+
+        if exit_code != 0:
+            self._update_pipeline_log(pid, "findings_corrector", "error",
+                                       error=f"Код {exit_code}")
+            await self._log(job, f"Corrector: код {exit_code}", "warn")
+            return
+
+        self._update_pipeline_log(pid, "findings_corrector", "done", message="OK")
+        await self._log(job, "Corrector завершён — 03_findings.json обновлён")
+
     async def _run_norm_verification(self, job: AuditJob, standalone: bool = True):
         """
-        Верификация нормативных ссылок:
+        Верификация нормативных ссылок (детерминированный режим):
         1. Извлечь нормы из 03_findings.json (Python)
-        2. Проверить через Claude CLI + WebSearch
-        3. Если есть устаревшие — пересмотреть замечания через Claude CLI
+        2. Детерминированная проверка статусов из norms_db.json (Python)
+        3. LLM WebSearch ТОЛЬКО для unknown/stale норм + верификация цитат
+        4. Слияние результатов LLM в norm_checks.json (Python)
+        5. Если есть устаревшие — пересмотреть замечания через Claude CLI
         """
         pid = job.project_id
         try:
@@ -1395,13 +1511,17 @@ class PipelineManager:
             sys.path.insert(0, str(BASE_DIR))
             from norms import (
                 extract_norms_from_findings,
-                format_norms_for_template,
+                generate_deterministic_checks,
+                format_llm_work_for_template,
+                merge_llm_norm_results,
                 format_findings_to_fix,
+                validate_norm_checks,
             )
 
             output_dir = resolve_project_dir(job.project_id) / "_output"
             findings_path = output_dir / "03_findings.json"
             norm_checks_path = output_dir / "norm_checks.json"
+            norm_checks_llm_path = output_dir / "norm_checks_llm.json"
             verified_path = output_dir / "03a_norms_verified.json"
 
             # Проверка: нужен 03_findings.json
@@ -1424,61 +1544,125 @@ class PipelineManager:
                 return
 
             await self._log(job, f"Найдено {total_norms} уникальных нормативных ссылок")
-            norms_list_text = format_norms_for_template(norms_data)
 
-            # ── Шаг 2: Проверка через Claude CLI + WebSearch ──
-            await self._log(job, f"Шаг 2: Проверка актуальности {total_norms} норм через WebSearch...")
-            job.progress_total = total_norms
+            # ── Шаг 2: Детерминированная проверка из norms_db.json (Python) ──
+            await self._log(job, "Шаг 2: Детерминированная проверка статусов из norms_db.json...")
+            det_result = generate_deterministic_checks(norms_data)
 
-            # ── Проверка rate limit перед верификацией норм ──
-            can_go = await self._check_before_launch(job)
-            if not can_go:
-                raise RuntimeError("Rate limit: ожидание превышено или отменено")
+            det_meta = det_result["meta"]
+            unknown_norms = det_result["unknown_norms"]
+            paragraphs_to_verify = det_result["paragraphs_to_verify"]
 
-            max_retries = RATE_LIMIT_MAX_RETRIES
-            for attempt in range(1, max_retries + 1):
-                exit_code, output, cli_result = await claude_runner.run_norm_verify(
-                    norms_list_text, job.project_id,
-                    on_output=lambda msg: self._log(job, msg),
+            await self._log(
+                job,
+                f"Из базы: {det_meta['from_db']} норм определены детерминированно, "
+                f"{det_meta['unknown_need_websearch']} требуют WebSearch, "
+                f"{len(paragraphs_to_verify)} цитат для проверки",
+            )
+
+            # Записать предварительный norm_checks.json (детерминированный)
+            preliminary_data = {
+                "meta": det_meta,
+                "checks": det_result["checks"],
+                "paragraph_checks": [],
+            }
+            with open(norm_checks_path, "w", encoding="utf-8") as f:
+                json.dump(preliminary_data, f, ensure_ascii=False, indent=2)
+
+            # ── Шаг 3: LLM WebSearch (только если есть работа) ──
+            llm_needed = bool(unknown_norms) or bool(paragraphs_to_verify)
+
+            if llm_needed:
+                llm_work_text = format_llm_work_for_template(
+                    unknown_norms, paragraphs_to_verify, findings_path,
                 )
-                stage_label = "norm_verify" if attempt == 1 else f"norm_verify_retry_{attempt}"
-                self._record_cli_usage(job, cli_result, stage_label)
+                llm_task_count = len(unknown_norms) + len(paragraphs_to_verify)
+                await self._log(
+                    job,
+                    f"Шаг 3: LLM WebSearch для {len(unknown_norms)} норм "
+                    f"+ {len(paragraphs_to_verify)} цитат...",
+                )
+                job.progress_total = llm_task_count
 
-                # Отмена — не ошибка
-                if claude_runner.is_cancelled(exit_code):
-                    job.status = JobStatus.CANCELLED
-                    await self._log(job, "Верификация норм отменена", "warn")
-                    return
+                # ── Проверка rate limit ──
+                can_go = await self._check_before_launch(job)
+                if not can_go:
+                    raise RuntimeError("Rate limit: ожидание превышено или отменено")
 
-                # Успех
-                if exit_code == 0:
-                    break
+                max_retries = RATE_LIMIT_MAX_RETRIES
+                for attempt in range(1, max_retries + 1):
+                    exit_code, output, cli_result = await claude_runner.run_norm_verify(
+                        llm_work_text, job.project_id,
+                        on_output=lambda msg: self._log(job, msg),
+                    )
+                    stage_label = "norm_verify" if attempt == 1 else f"norm_verify_retry_{attempt}"
+                    self._record_cli_usage(job, cli_result, stage_label)
 
-                # Rate limit или таймаут → ждём и повторяем
-                if claude_runner.is_rate_limited(exit_code, output or "", "") or claude_runner.is_timeout(exit_code):
-                    reason = "таймаут" if claude_runner.is_timeout(exit_code) else "rate limit"
-                    await self._log(job, f"{reason} при верификации норм (попытка {attempt}/{max_retries}), ожидание...", "warn")
-                    if attempt < max_retries:
-                        can_continue = await self._wait_for_rate_limit(job, f"{reason} при верификации норм", cli_output=output or "")
-                        if not can_continue:
-                            raise RuntimeError(f"Верификация норм: ожидание {reason} превышено или отменено")
-                        continue
-                    else:
-                        raise RuntimeError(f"Верификация норм: {max_retries} попыток исчерпано ({reason})")
+                    if claude_runner.is_cancelled(exit_code):
+                        job.status = JobStatus.CANCELLED
+                        await self._log(job, "Верификация норм отменена", "warn")
+                        return
 
-                # Другая ошибка — не повторяем
-                await self._log(job, f"Ошибка верификации (код {exit_code})", "error")
-                raise RuntimeError(f"Claude CLI norm_verify: exit code {exit_code}")
+                    if exit_code == 0:
+                        break
 
-            # Проверяем что файл создан
+                    if claude_runner.is_rate_limited(exit_code, output or "", "") or claude_runner.is_timeout(exit_code):
+                        reason = "таймаут" if claude_runner.is_timeout(exit_code) else "rate limit"
+                        await self._log(job, f"{reason} при верификации норм (попытка {attempt}/{max_retries}), ожидание...", "warn")
+                        if attempt < max_retries:
+                            can_continue = await self._wait_for_rate_limit(job, f"{reason} при верификации норм", cli_output=output or "")
+                            if not can_continue:
+                                raise RuntimeError(f"Верификация норм: ожидание {reason} превышено или отменено")
+                            continue
+                        else:
+                            raise RuntimeError(f"Верификация норм: {max_retries} попыток исчерпано ({reason})")
+
+                    await self._log(job, f"Ошибка верификации (код {exit_code})", "error")
+                    raise RuntimeError(f"Claude CLI norm_verify: exit code {exit_code}")
+
+                # ── Шаг 3b: Слияние результатов LLM ──
+                if norm_checks_llm_path.exists():
+                    await self._log(job, "Слияние результатов LLM с детерминированными проверками...")
+                    merge_stats = merge_llm_norm_results(norm_checks_path, norm_checks_llm_path)
+                    await self._log(
+                        job,
+                        f"Слияние: {merge_stats['checks_updated_from_llm']} норм обновлено, "
+                        f"{merge_stats['paragraph_checks']} цитат проверено, "
+                        f"norms_db обновлено: {merge_stats['norms_db_updated']}",
+                    )
+                else:
+                    await self._log(job, "norm_checks_llm.json не создан LLM — используем детерминированные результаты", "warn")
+            else:
+                await self._log(job, "Все нормы определены детерминированно — LLM WebSearch не требуется", "info")
+
+            # Проверяем что файл существует
             if not norm_checks_path.exists():
-                await self._log(job, "norm_checks.json не создан — Claude не записал результат", "warn")
+                await self._log(job, "norm_checks.json не создан", "warn")
                 job.status = JobStatus.COMPLETED
                 return
 
             # Читаем результаты
             with open(norm_checks_path, "r", encoding="utf-8") as f:
                 checks_data = json.load(f)
+
+            # ── Пост-валидация (программный контроль) ──
+            validation = validate_norm_checks(norm_checks_path)
+            if validation.get("fixes_applied"):
+                await self._log(
+                    job,
+                    f"Пост-валидация: {len(validation['fixes_applied'])} исправлений: "
+                    + "; ".join(validation["fixes_applied"][:3]),
+                    "warn",
+                )
+                with open(norm_checks_path, "r", encoding="utf-8") as f:
+                    checks_data = json.load(f)
+            if validation.get("violations"):
+                await self._log(
+                    job,
+                    f"Пост-валидация: {len(validation['violations'])} нарушений: "
+                    + "; ".join(validation["violations"][:3]),
+                    "warn",
+                )
 
             checks = checks_data.get("checks", [])
             needs_fix = [c for c in checks if c.get("needs_revision", False)]
@@ -1862,9 +2046,20 @@ class PipelineManager:
             self.active_jobs[pid] = job
             self._tasks[pid] = asyncio.current_task()
 
+            # ═══ ЭТАП 5.5: Critic + Corrector ═══
+            findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
+            if findings_path.exists():
+                await self._run_findings_review(job, project_info)
+
+                if job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
+                    return
+
+                self.active_jobs[pid] = job
+                self._tasks[pid] = asyncio.current_task()
+
             # ═══ ЭТАП 6: Верификация норм ═══
             self._clean_stage_files(pid, [
-                "03a_norms_verified.json", "norm_checks.json",
+                "03a_norms_verified.json", "norm_checks.json", "norm_checks_llm.json",
             ])
             self._reset_job_progress(job)
             findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
@@ -2023,7 +2218,8 @@ class PipelineManager:
             # ═══ ЭТАП 2: Текстовый анализ MD (Claude) ═══
             self._clean_stage_files(pid, [
                 "01_text_analysis.json", "02_blocks_analysis.json",
-                "03_findings.json", "block_batch_*.json", "block_batches.json",
+                "03_findings.json", "03_findings_review.json", "03_findings_pre_review.json",
+                "block_batch_*.json", "block_batches.json",
             ])
             self._reset_job_progress(job)
             job.stage = AuditStage.TEXT_ANALYSIS
@@ -2298,9 +2494,20 @@ class PipelineManager:
             self.active_jobs[pid] = job
             self._tasks[pid] = asyncio.current_task()
 
+            # ═══ ЭТАП 6.5: Critic + Corrector (проверка замечаний) ═══
+            findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"
+            if findings_path.exists():
+                await self._run_findings_review(job, project_info)
+
+                if job.status in (JobStatus.CANCELLED, JobStatus.FAILED):
+                    return
+
+                self.active_jobs[pid] = job
+                self._tasks[pid] = asyncio.current_task()
+
             # ═══ ЭТАП 7: Верификация норм ═══
             self._clean_stage_files(pid, [
-                "03a_norms_verified.json", "norm_checks.json",
+                "03a_norms_verified.json", "norm_checks.json", "norm_checks_llm.json",
             ])
             self._reset_job_progress(job)
             findings_path = resolve_project_dir(pid) / "_output" / "03_findings.json"

@@ -2,10 +2,11 @@
   "version": 1,
   "stages": {
     "crop_blocks": {
-      "status": "done",
-      "started_at": "2026-03-13T09:12:02.121353",
-      "completed_at": "2026-03-13T09:12:08.591740",
-      "message": "OK"
+      "status": "error",
+      "started_at": "2026-03-14T01:49:27.396125",
+      "completed_at": "2026-03-14T01:49:31.440832",
+      "message": "OK",
+      "error": "Exit code: 2"
     },
     "text_analysis": {
       "status": "done",
@@ -54,5 +55,5 @@
       "message": "OK"
     }
   },
-  "last_updated": "2026-03-13T09:38:00.615287"
+  "last_updated": "2026-03-14T01:49:31.440832"
 }

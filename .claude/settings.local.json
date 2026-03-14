@@ -128,7 +128,9 @@
       "Bash(curl -s -X PUT \"http://localhost:8080/api/projects/disciplines/%D0%A2%D0%A5\" -H \"Content-Type: application/json\" -d \"{\"\"name\"\":\"\"Тест\"\",\"\"color\"\":\"\"#ff0000\"\"}\")",
       "Bash(for d:*)",
       "Bash(do echo:*)",
-      "Read(//d/Отедел Системного Анализа/1. Calude code/disciplines/**)"
+      "Read(//d/Отедел Системного Анализа/1. Calude code/disciplines/**)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -l evidence d:Отедел Системного Анализа1. Calude code/projects/*/*/_output/03_findings.json)"
     ]
   }
 }

@@ -79,9 +79,14 @@ pip install -r webapp/requirements.txt
 │   │       ├── project_info.json     ← конфигурация, метаданные
 │   │       └── _output/              ← генерируемые файлы
 │   │           ├── blocks/           ← кропнутые image-блоки (PNG)
+│   │           ├── document_graph.json    ← структура документа (Knowledge Graph)
 │   │           ├── 01_text_analysis.json  ← этап 1
 │   │           ├── 02_blocks_analysis.json← этап 2
 │   │           ├── 03_findings.json       ← этап 3: МАСТЕР замечаний
+│   │           ├── 03_findings_review.json← вердикты критика (этап 3b)
+│   │           ├── 03_findings_pre_review.json ← бэкап до корректировки
+│   │           ├── norm_checks.json       ← результат верификации норм
+│   │           ├── norm_checks_llm.json   ← LLM-часть верификации (временный)
 │   │           ├── optimization.json      ← сценарии оптимизации
 │   │           └── pipeline_log.json      ← wall-clock время этапов
 │   └── DOC/                          ← общие документы (вендор лист и др.)
@@ -102,7 +107,7 @@ pip install -r webapp/requirements.txt
 
 | Файл | Назначение |
 |------|-----------|
-| `process_project.py` | Подготовка: проверка MD-файла, извлечение метаданных |
+| `process_project.py` | Подготовка: проверка MD-файла, извлечение метаданных, построение Document Knowledge Graph |
 | `blocks.py` | Блоки: `crop` (скачивание по crop_url), `batches` (группировка), `merge` (слияние) |
 | `norms.py` | Нормы: `verify` (извлечение ссылок), `update` (обновление norms_db.json) |
 | `query_project.py` | Быстрый поиск по JSON-конвейеру |
@@ -122,7 +127,7 @@ FastAPI на порту 8080. Запуск: `cd webapp && python main.py`
 
 **Ключевые параметры:** таймаут пакета 600с, аудита 3600с, до 3 параллельных Claude-сессий. `OBJECT_NAME` в config.py — название объекта на дашборде.
 
-**Гибридные модели per-stage:** `config.py` → `_stage_models` задаёт модель для каждого этапа. Sonnet (по умолчанию) для структурных задач, Opus для findings_merge и optimization. API: `GET/POST /api/audit/model/stages`.
+**Гибридные модели per-stage:** `config.py` → `_stage_models` задаёт модель для каждого этапа. Sonnet (по умолчанию) для структурных задач, Opus для findings_merge и optimization. `findings_critic` и `findings_corrector` используют Sonnet (структурные проверки). API: `GET/POST /api/audit/model/stages`.
 
 **Batch queue:** `pipeline_service.py` поддерживает групповые действия — последовательный аудит выбранных проектов. Очередь динамическая: можно добавлять проекты в работающую очередь через `POST /api/audit/batch/add`. Цикл обработки — `while`, не `for`, чтобы подхватывать добавленные элементы.
 
@@ -176,6 +181,10 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
 ### Конвейер аудита (блочный метод)
 
 ```
+[00] Подготовка → document_graph.json
+  ↓  process_project.py: парсинг MD → структурированный граф страниц
+  ↓  blocks.py crop → обогащение графа данными из blocks/index.json
+  ↓
 [01] Анализ текста (MD-файл) → 01_text_analysis.json
   ↓  Арифметика таблиц, перекрёстная сверка, нормативные ссылки
   ↓  Приоритизация image-блоков (HIGH/MEDIUM/LOW/SKIP)
@@ -183,11 +192,20 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
 [02] Кропинг + анализ блоков → 02_blocks_analysis.json
   ↓  blocks.py crop → blocks.py batches → N Claude-сессий → blocks.py merge
   ↓  Каждый блок — законченный фрагмент чертежа (не тайл-сетка)
-  ↓  Сверка значений на чертеже с project_params из этапа 01
+  ↓  Per-block контекст из document_graph (не сырой MD)
   ↓
-[03] Свод замечаний → 03_findings.json + audit_results_*.md
-     Межблочная и межстраничная сверка
-     Дедупликация T + G → F
+[03] Свод замечаний → 03_findings.json
+  ↓  Межблочная и межстраничная сверка, дедупликация T + G → F
+  ↓  Каждое F-замечание содержит evidence[] с трассировкой к блокам/тексту
+  ↓
+[03b] Critic → Corrector (условно) → 03_findings_review.json
+  ↓  Critic: 5 проверок grounding (evidence, page, sheet, текст)
+  ↓  Corrector: запускается только если critic нашёл проблемы
+  ↓  Результат: исправленный 03_findings.json
+  ↓
+[04] Верификация норм → norm_checks.json
+     Python: детерминированная проверка из norms_db.json
+     LLM: только для unknown/stale норм (WebSearch) + цитаты
 ```
 
 ### Пакетный анализ блоков
@@ -198,6 +216,71 @@ blocks.py crop → blocks/ + index.json → blocks.py batches → block_batches.
 
 **Правило:** основная сессия аудита читает готовый `02_blocks_analysis.json`, а НЕ блоки напрямую.
 
+### Document Knowledge Graph (`document_graph.json`)
+
+`process_project.py` → `build_document_graph()` парсит MD-файл в структурированный JSON:
+- Для каждой страницы: `sheet_no`, `sheet_name`, `text_blocks[]`, `image_blocks[]`
+- `blocks.py crop` обогащает image_blocks данными из `blocks/index.json` (file, size_kb)
+- Используется в `task_builder.py` для per-block контекста вместо сырого MD
+- Fallback: если `document_graph.json` нет → парсится MD напрямую (старый путь)
+
+### Система проверки замечаний (Critic → Corrector)
+
+Схема «генератор → критик → корректор» для валидации grounding замечаний:
+
+**Critic** (`findings_critic_task.md`) — 5 проверок каждого F-замечания:
+1. Наличие `evidence[]` или `related_block_ids[]`
+2. Существование evidence-блоков в `02_blocks_analysis.json`
+3. Семантическое соответствие evidence смыслу замечания
+4. Корректность page/sheet
+5. Непротиворечивость тексту из `document_graph.json`
+
+Вердикты: `pass`, `no_evidence`, `phantom_block`, `weak_evidence`, `page_mismatch`, `contradicts_text`
+
+**Corrector** (`findings_corrector_task.md`) — запускается **условно** (только если critic нашёл issues):
+- `no_evidence` → найти evidence или понизить в ПРОВЕРИТЬ_ПО_СМЕЖНЫМ
+- `phantom_block` → удалить несуществующие block_id
+- `page_mismatch` → исправить page/sheet
+- `contradicts_text` → удалить или переформулировать
+
+### Evidence-трассировка в замечаниях
+
+Каждое F-замечание в `03_findings.json` содержит трассировку к исходным данным:
+
+```json
+{
+  "evidence": [
+    {"type": "image", "block_id": "block_007_1", "page": 4},
+    {"type": "text", "block_id": "RUXD-WP4R-6C3", "page": 4}
+  ],
+  "related_block_ids": ["block_007_1"]
+}
+```
+
+Приоритет при маппинге finding → block (в `findings_service.py`):
+1. `evidence[]` (type=image) — наивысший
+2. `related_block_ids[]` — fallback
+3. Regex block_id в description — fallback
+4. Page-based — последний fallback
+
+### Детерминированная верификация норм
+
+Статус документа (active/replaced/cancelled) — **не решение LLM**, а вычисление из `norms_db.json` + TTL-контроль:
+
+```
+[Python] extract_norms_from_findings() → список норм
+    ↓
+[Python] generate_deterministic_checks() → norm_checks.json (предварительный)
+    ↓  Свежий кеш → verified_via="deterministic"
+    ↓  Stale/unknown → помечает для LLM WebSearch
+    ↓
+[Условно] LLM WebSearch → norm_checks_llm.json (только unknown/stale)
+    ↓
+[Python] merge_llm_norm_results() → финальный norm_checks.json
+```
+
+Если все нормы в базе и кеш свежий — LLM не вызывается (экономия токенов).
+
 ### Правила работы с JSON
 
 | Вопрос | Источник |
@@ -205,6 +288,9 @@ blocks.py crop → blocks/ + index.json → blocks.py batches → block_batches.
 | Замечание по ID/категории | `03_findings.json` |
 | Что видели на чертеже | `02_blocks_analysis.json` |
 | Нормативные ссылки | `01_text_analysis.json` → `normative_refs_found` |
+| Структура документа, текст/блоки по страницам | `document_graph.json` |
+| Вердикты проверки замечаний | `03_findings_review.json` |
+| Статус нормативных документов | `norm_checks.json` |
 | `03_findings.json` не найден | Сообщить что аудит не завершён |
 
 ## Приоритет источников данных
@@ -308,19 +394,24 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 - СП 5.13130.2009 → заменён на СП 484/485/486.1311500.2020
 - ВСН 59-88 → заменён через цепочку на СП 256.1325800.2016
 
-### Верификация нормативных цитат (3-уровневая)
+### Верификация нормативных цитат (3-уровневая + детерминированный слой)
 
 Система защиты от ошибочных ссылок на нормы:
 
 ```
+Уровень 0 (НОВЫЙ): Детерминированная проверка (Python)
+  ↓ generate_deterministic_checks() → статус из norms_db.json
+  ↓ TTL-контроль: свежий кеш = железобетонный статус, stale = на WebSearch
+  ↓ LLM НЕ решает active/replaced/cancelled — только Python
+
 Уровень 1: norm_quote + norm_confidence
   ↓ Каждое замечание содержит цитату нормы и уверенность (0.0–1.0)
   ↓ Заполняется на этапах 01/02/03
 
 Уровень 2: paragraph_checks (при confidence < 0.8)
-  ↓ Верификатор проверяет конкретный пункт нормы через WebSearch
+  ↓ LLM проверяет конкретный пункт нормы через WebSearch
   ↓ Результат: paragraph_verified true/false + actual_quote
-  ↓ Записывается в norm_checks.json → paragraph_checks[]
+  ↓ LLM пишет в norm_checks_llm.json → Python сливает в norm_checks.json
 
 Уровень 3: norms_paragraphs.json (накопительный кеш)
   ↓ Подтверждённые цитаты сохраняются для будущих аудитов
@@ -330,7 +421,8 @@ PDF из AutoCAD/BIM могут содержать ISOCPEUR/GOST с нестан
 **Ключевые файлы:**
 - `norms_db.json` — статус документов (действует/заменён/отменён), 176+ записей
 - `norms_paragraphs.json` — проверенные цитаты конкретных пунктов
-- `norm_checks.json` (в _output/) — результат верификации проекта
+- `norm_checks.json` (в _output/) — финальный результат (Python + LLM)
+- `norm_checks_llm.json` (в _output/) — промежуточный результат от LLM (сливается автоматически)
 
 **Поля замечания:** `norm_quote` (цитата или null), `norm_confidence` (0.0–1.0)
 

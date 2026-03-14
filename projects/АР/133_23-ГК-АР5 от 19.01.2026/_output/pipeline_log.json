@@ -2,12 +2,12 @@
   "version": 1,
   "stages": {
     "crop_blocks": {
-      "status": "done",
-      "started_at": "2026-03-13T02:39:29.377030",
-      "error": "Сервер перезапущен во время выполнения",
+      "status": "error",
+      "started_at": "2026-03-14T01:49:32.366849",
       "interrupted_at": "2026-03-13T02:39:47.879828",
-      "completed_at": "2026-03-13T02:40:34.692587",
-      "message": "OK"
+      "completed_at": "2026-03-14T01:49:33.144427",
+      "message": "OK",
+      "error": "Exit code: 2"
     },
     "text_analysis": {
       "status": "done",
@@ -56,5 +56,5 @@
       "message": "OK"
     }
   },
-  "last_updated": "2026-03-13T03:47:30.691567"
+  "last_updated": "2026-03-14T01:49:33.144427"
 }

@@ -121,15 +121,58 @@ def extract_norms_from_findings(findings_path: Path) -> dict:
 
 
 def format_norms_for_template(norms_data: dict) -> str:
-    """Форматировать список норм для подстановки в шаблон Claude."""
+    """Форматировать список норм для подстановки в шаблон Claude.
+
+    Обогащает каждую норму данными из norms_db.json:
+    - cached_status, edition_status, last_verified
+    - force_websearch (True если кеш устарел или нормы нет в базе)
+
+    Это превращает правило "проверять кеш старше 30 дней" из текста промпта
+    в детерминированное поле входных данных.
+    """
+    # Загрузить кеш норм
+    db = load_norms_db()
+    db_norms = db.get("norms", {})
+    now = datetime.now()
+    stale_days = db.get("meta", {}).get("stale_after_days", 30)
+
     lines = []
     for i, (norm, info) in enumerate(norms_data["norms"].items(), 1):
         findings_str = ", ".join(info["affected_findings"])
         cited = info["cited_as"][0] if info["cited_as"] else norm
+
+        # Поиск в кеше (с нормализацией ключа)
+        norm_key = normalize_doc_number(norm)
+        cached = db_norms.get(norm_key)
+
+        if cached:
+            cached_status = cached.get("status", "?")
+            edition_st = cached.get("edition_status", "")
+            last_ver = cached.get("last_verified", "")
+            # Вычислить stale
+            is_stale = True
+            if last_ver:
+                try:
+                    ver_date = datetime.fromisoformat(last_ver)
+                    is_stale = (now - ver_date) > timedelta(days=stale_days)
+                except (ValueError, TypeError):
+                    is_stale = True
+            force_ws = is_stale
+            cache_line = (
+                f"   - **Кеш:** status=`{cached_status}`"
+                + (f", edition=`{edition_st}`" if edition_st else "")
+                + f", last_verified=`{last_ver[:10] if last_ver else '?'}`"
+                + f", **force_websearch={force_ws}**"
+            )
+        else:
+            force_ws = True
+            cache_line = "   - **Кеш:** не найдена, **force_websearch=True**"
+
         entry = (
             f"{i}. **{norm}**\n"
             f"   - Как указано в проекте: `{cited}`\n"
-            f"   - Затронутые замечания: {findings_str}"
+            f"   - Затронутые замечания: {findings_str}\n"
+            f"{cache_line}"
         )
         low_conf = info.get("low_confidence_findings", [])
         if low_conf:
@@ -187,6 +230,385 @@ def format_findings_to_fix(norm_checks_path: Path, findings_path: Path) -> str:
     if not lines:
         return "Все нормы актуальны. Пересмотр не требуется."
     return "\n".join(lines)
+
+
+def generate_deterministic_checks(norms_data: dict) -> dict:
+    """Детерминированная проверка статуса документов из norms_db.json.
+
+    Python гарантирует актуальность документа (железобетон).
+    Не использует LLM — только реестр + TTL-контроль.
+
+    Returns:
+        {
+            "checks": [...],           # статусы всех норм (из БД или unknown)
+            "unknown_norms": [...],     # нормы, требующие WebSearch (нет в БД или stale)
+            "paragraphs_to_verify": [...],  # цитаты с low confidence
+            "meta": {...},
+        }
+    """
+    db = load_norms_db()
+    db_norms = db.get("norms", {})
+    replacements = db.get("replacements", {})
+    now = datetime.now()
+    stale_days = db.get("meta", {}).get("stale_after_days", 30)
+
+    # Загрузить параграфы для быстрой проверки
+    pdb = load_norms_paragraphs()
+    known_paragraphs = pdb.get("paragraphs", {})
+
+    checks = []
+    unknown_norms = []
+    paragraphs_to_verify = []
+
+    stats = {
+        "total": 0,
+        "from_db": 0,
+        "unknown": 0,
+        "active": 0,
+        "outdated_edition": 0,
+        "replaced": 0,
+        "cancelled": 0,
+    }
+
+    for norm_raw, info in norms_data.get("norms", {}).items():
+        stats["total"] += 1
+        norm_key = normalize_doc_number(norm_raw)
+        cited_as = info["cited_as"][0] if info.get("cited_as") else norm_raw
+        affected = info.get("affected_findings", [])
+
+        cached = db_norms.get(norm_key)
+
+        if cached:
+            last_ver = cached.get("last_verified", "")
+            is_stale = True
+            if last_ver:
+                try:
+                    ver_date = datetime.fromisoformat(last_ver)
+                    is_stale = (now - ver_date) > timedelta(days=stale_days)
+                except (ValueError, TypeError):
+                    is_stale = True
+
+            if is_stale:
+                # В базе есть, но устарел — нужен WebSearch для подтверждения
+                unknown_norms.append({
+                    "norm": norm_raw,
+                    "norm_key": norm_key,
+                    "cited_as": cited_as,
+                    "affected_findings": affected,
+                    "reason": "stale_cache",
+                    "cached_status": cached.get("status"),
+                    "last_verified": last_ver,
+                })
+                # Пока ставим статус из кеша (с пометкой)
+                check_entry = _build_check_from_cache(
+                    norm_raw, norm_key, cached, cited_as, affected,
+                    verified_via="cache_stale",
+                )
+                checks.append(check_entry)
+                stats["unknown"] += 1
+            else:
+                # Свежий кеш — детерминированный статус
+                check_entry = _build_check_from_cache(
+                    norm_raw, norm_key, cached, cited_as, affected,
+                    verified_via="deterministic",
+                )
+                checks.append(check_entry)
+                stats["from_db"] += 1
+                s = check_entry["status"]
+                if s in stats:
+                    stats[s] += 1
+        else:
+            # Нормы нет в базе — нужен WebSearch
+            unknown_norms.append({
+                "norm": norm_raw,
+                "norm_key": norm_key,
+                "cited_as": cited_as,
+                "affected_findings": affected,
+                "reason": "not_in_db",
+            })
+            checks.append({
+                "norm_as_cited": cited_as,
+                "doc_number": norm_key,
+                "status": "unknown",
+                "current_version": None,
+                "replacement_doc": None,
+                "source_url": None,
+                "details": "Норма не найдена в norms_db.json — требуется WebSearch",
+                "affected_findings": affected,
+                "needs_revision": False,  # Пока неизвестно
+                "verified_via": "pending_websearch",
+            })
+            stats["unknown"] += 1
+
+        # Идентификация цитат для проверки LLM
+        for fid in affected:
+            low_conf = info.get("low_confidence_findings", [])
+            if fid in low_conf:
+                # Проверить: может цитата уже в paragraphs кеше?
+                paragraph_key = f"{norm_key}, {fid}"  # примерный ключ
+                if paragraph_key not in known_paragraphs:
+                    paragraphs_to_verify.append({
+                        "finding_id": fid,
+                        "norm": norm_raw,
+                        "norm_key": norm_key,
+                    })
+
+    # Лимит на параграфы (как раньше — max 10)
+    paragraphs_to_verify = paragraphs_to_verify[:10]
+
+    meta = {
+        "check_date": now.isoformat(),
+        "total_checked": stats["total"],
+        "from_db": stats["from_db"],
+        "unknown_need_websearch": stats["unknown"],
+        "results": {
+            "active": stats["active"],
+            "outdated_edition": stats["outdated_edition"],
+            "replaced": stats["replaced"],
+            "cancelled": stats["cancelled"],
+            "unknown": stats["unknown"],
+        },
+    }
+
+    return {
+        "checks": checks,
+        "unknown_norms": unknown_norms,
+        "paragraphs_to_verify": paragraphs_to_verify,
+        "meta": meta,
+    }
+
+
+def _build_check_from_cache(
+    norm_raw: str,
+    norm_key: str,
+    cached: dict,
+    cited_as: str,
+    affected: list[str],
+    verified_via: str,
+) -> dict:
+    """Построить запись check из кешированных данных."""
+    db_status = cached.get("status", "active")
+    edition_status = cached.get("edition_status")
+
+    # Определить финальный статус для замечания
+    if edition_status == "outdated":
+        display_status = "outdated_edition"
+    else:
+        display_status = db_status
+
+    # needs_revision: детерминированно
+    needs_revision = display_status in ("replaced", "cancelled", "outdated_edition")
+
+    return {
+        "norm_as_cited": cited_as,
+        "doc_number": norm_key,
+        "status": display_status,
+        "current_version": cached.get("current_version"),
+        "replacement_doc": cached.get("replacement_doc"),
+        "source_url": cached.get("source_url"),
+        "details": cached.get("notes", ""),
+        "affected_findings": affected,
+        "needs_revision": needs_revision,
+        "verified_via": verified_via,
+    }
+
+
+def merge_llm_norm_results(
+    deterministic_path: Path,
+    llm_results_path: Path,
+) -> dict:
+    """Слить результаты LLM (WebSearch) с детерминированными проверками.
+
+    LLM обновляет:
+    1. checks[] для unknown_norms (заполняет реальный статус)
+    2. paragraph_checks[] (верификация цитат)
+
+    Returns: статистика слияния.
+    """
+    with open(deterministic_path, "r", encoding="utf-8") as f:
+        det_data = json.load(f)
+    with open(llm_results_path, "r", encoding="utf-8") as f:
+        llm_data = json.load(f)
+
+    # Индексировать детерминированные checks по doc_number
+    det_checks = {c["doc_number"]: c for c in det_data.get("checks", [])}
+
+    # Слить LLM checks (обновить unknown → реальный статус)
+    updated = 0
+    for llm_check in llm_data.get("checks", []):
+        doc = llm_check.get("doc_number", "")
+        if not doc:
+            continue
+        doc_key = normalize_doc_number(doc)
+        if doc_key in det_checks:
+            old = det_checks[doc_key]
+            if old.get("status") == "unknown" or old.get("verified_via") in (
+                "pending_websearch", "cache_stale",
+            ):
+                # Обновить из LLM
+                old["status"] = llm_check.get("status", old["status"])
+                old["current_version"] = llm_check.get("current_version") or old.get("current_version")
+                old["replacement_doc"] = llm_check.get("replacement_doc") or old.get("replacement_doc")
+                old["source_url"] = llm_check.get("source_url") or old.get("source_url")
+                old["details"] = llm_check.get("details") or old.get("details", "")
+                old["verified_via"] = llm_check.get("verified_via", "websearch")
+                # Пересчитать needs_revision
+                old["needs_revision"] = old["status"] in (
+                    "replaced", "cancelled", "outdated_edition",
+                )
+                updated += 1
+        else:
+            # Новая норма от LLM (не было в детерминированном списке)
+            det_checks[doc_key] = llm_check
+            updated += 1
+
+    # Собрать финальный norm_checks.json
+    final_checks = list(det_checks.values())
+
+    # paragraph_checks берём целиком от LLM
+    paragraph_checks = llm_data.get("paragraph_checks", [])
+
+    # Пересчитать meta
+    meta = det_data.get("meta", {})
+    meta["from_websearch"] = updated
+    by_status = {}
+    for c in final_checks:
+        s = c.get("status", "unknown")
+        by_status[s] = by_status.get(s, 0) + 1
+    meta["results"] = by_status
+
+    final = {
+        "meta": meta,
+        "checks": final_checks,
+        "paragraph_checks": paragraph_checks,
+    }
+
+    # Записать финальный norm_checks.json (в то же место что deterministic)
+    with open(deterministic_path, "w", encoding="utf-8") as f:
+        json.dump(final, f, ensure_ascii=False, indent=2)
+
+    # Обновить norms_db.json из LLM-результатов
+    db = load_norms_db()
+    db_updated = 0
+    for llm_check in llm_data.get("checks", []):
+        result = merge_norm_check(db, llm_check, meta.get("project_id", "unknown"))
+        if result in ("added", "updated"):
+            db_updated += 1
+    if db_updated > 0:
+        save_norms_db(db)
+
+    return {
+        "checks_updated_from_llm": updated,
+        "paragraph_checks": len(paragraph_checks),
+        "norms_db_updated": db_updated,
+    }
+
+
+def format_llm_work_for_template(
+    unknown_norms: list[dict],
+    paragraphs_to_verify: list[dict],
+    findings_path: Path | None = None,
+) -> str:
+    """Форматировать только LLM-работу для шаблона norm_verify.
+
+    Включает:
+    1. Нормы с unknown статусом — нужен WebSearch для определения статуса
+    2. Цитаты с low confidence — нужен WebSearch для верификации текста пункта
+    """
+    lines = []
+
+    if unknown_norms:
+        lines.append("## Часть 1: Определение статуса документов (WebSearch)\n")
+        lines.append("Для каждой нормы ниже выполни WebSearch и определи актуальный статус:\n")
+        for i, norm in enumerate(unknown_norms, 1):
+            reason = "не в базе" if norm.get("reason") == "not_in_db" else f"кеш устарел (проверен: {norm.get('last_verified', '?')[:10]})"
+            findings_str = ", ".join(norm.get("affected_findings", []))
+            cached_status = norm.get("cached_status")
+            cached_hint = f", предыдущий статус: `{cached_status}`" if cached_status else ""
+            lines.append(
+                f"{i}. **{norm['norm']}** ({reason}{cached_hint})\n"
+                f"   - Затронутые замечания: {findings_str}\n"
+            )
+
+    if paragraphs_to_verify:
+        lines.append("\n## Часть 2: Верификация цитат пунктов (WebSearch)\n")
+        lines.append("Для каждого замечания ниже проверь точный текст пункта нормы:\n")
+        for i, pv in enumerate(paragraphs_to_verify, 1):
+            lines.append(
+                f"{i}. Замечание **{pv['finding_id']}**: норма `{pv['norm']}`\n"
+            )
+
+    if not lines:
+        return ""
+
+    return "\n".join(lines)
+
+
+def validate_norm_checks(norm_checks_path: Path) -> dict:
+    """Пост-валидация norm_checks.json — программный слой контроля.
+
+    Проверяет:
+    1. needs_revision=True для replaced/cancelled/outdated_edition
+    2. force_websearch нарушения (verified_via="cache" при force_websearch=True)
+
+    Возвращает dict с результатами и списком исправлений.
+    """
+    if not norm_checks_path.exists():
+        return {"valid": False, "error": "norm_checks.json не найден"}
+
+    with open(norm_checks_path, "r", encoding="utf-8") as f:
+        checks_data = json.load(f)
+
+    checks = checks_data.get("checks", [])
+    fixes = []
+    violations = []
+
+    for check in checks:
+        doc = check.get("doc_number", "?")
+        status = check.get("status", "")
+
+        # Правило 1: replaced/cancelled/outdated_edition → needs_revision=True
+        if status in ("replaced", "cancelled", "outdated_edition"):
+            if not check.get("needs_revision", False):
+                check["needs_revision"] = True
+                fixes.append(
+                    f"{doc}: needs_revision принудительно=True (status={status})"
+                )
+
+        # Правило 2: если по данным кеша был force_websearch, а LLM ответил "cache"
+        # (Этот контроль — soft: мы не можем знать force_websearch на этом этапе,
+        # но можем проверить консистентность: stale кеш + verified_via="cache" = подозрительно)
+        if check.get("verified_via") == "cache":
+            db = load_norms_db()
+            cached = db.get("norms", {}).get(normalize_doc_number(doc))
+            if cached:
+                last_ver = cached.get("last_verified", "")
+                stale_days = db.get("meta", {}).get("stale_after_days", 30)
+                if last_ver:
+                    try:
+                        ver_date = datetime.fromisoformat(last_ver)
+                        is_stale = (datetime.now() - ver_date) > timedelta(days=stale_days)
+                        if is_stale:
+                            violations.append(
+                                f"{doc}: verified_via='cache' но кеш устарел "
+                                f"(last_verified={last_ver[:10]}, stale_days={stale_days})"
+                            )
+                            check["verified_via"] = "cache_stale"
+                            check["_validation_warning"] = "force_websearch ignored"
+                    except (ValueError, TypeError):
+                        pass
+
+    # Записать исправления обратно
+    if fixes or violations:
+        with open(norm_checks_path, "w", encoding="utf-8") as f:
+            json.dump(checks_data, f, ensure_ascii=False, indent=2)
+
+    return {
+        "valid": len(violations) == 0,
+        "total_checks": len(checks),
+        "fixes_applied": fixes,
+        "violations": violations,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -301,8 +723,34 @@ def _guess_category(doc_number: str) -> str:
 
 
 def normalize_doc_number(raw: str) -> str:
-    """Нормализовать номер документа для использования как ключ."""
-    doc = raw.strip().replace("**", "")
+    """Нормализовать номер документа для использования как ключ.
+
+    Правила:
+    1. Убрать markdown-жирный (**), лишние пробелы
+    2. Убрать хвосты: (действует...), (ред...), (изм...), (с изменениями...)
+    3. Унифицировать пробелы и дефисы
+    4. НЕ убирать год — он часть ключа (СП 54.13330.2022 ≠ СП 54.13330.2016)
+    5. НЕ схлопывать "ГОСТ Р" в "ГОСТ" — это разные документы
+    """
+    doc = raw.strip()
+    # Убрать markdown
+    doc = doc.replace("**", "").replace("*", "")
+    # Убрать хвосты в скобках: (действует...), (ред. ...), (изм. ...), (с изменениями...)
+    doc = re.sub(
+        r'\s*\((?:действу|ред\.|изм\.|с изм|введ|утв|актуал|в ред)[^)]*\)',
+        '', doc, flags=re.IGNORECASE,
+    )
+    # Убрать хвосты без скобок: "с Изменениями №1-3", "с Изменением №1"
+    doc = re.sub(
+        r'\s+с\s+(?:[Ии]зменениями?|[Ии]зменением)\s*(?:№\s*[\d,\s\-–]+)?',
+        '', doc,
+    )
+    # Убрать "ред. DD.MM.YYYY" без скобок
+    doc = re.sub(r'\s*ред\.\s*\d{2}\.\d{2}\.\d{4}', '', doc)
+    # Унифицировать пробелы
+    doc = re.sub(r'\s+', ' ', doc).strip()
+    # Убрать trailing точку/запятую
+    doc = doc.rstrip('.,;: ')
     return doc
 
 
@@ -318,6 +766,8 @@ def merge_norm_check(db: dict, check: dict, project_id: str) -> str:
 
     now = datetime.now().isoformat()
 
+    # Статус документа: active/replaced/cancelled
+    # edition_status: ok/outdated/unknown — отдельно от статуса документа
     status_map = {
         "active": "active",
         "outdated_edition": "active",
@@ -326,12 +776,29 @@ def merge_norm_check(db: dict, check: dict, project_id: str) -> str:
     }
     db_status = status_map.get(status, status)
 
+    # Детальный статус редакции — НЕ схлопываем
+    if status == "outdated_edition":
+        edition_status = "outdated"
+    elif status == "active":
+        edition_status = "ok"
+    else:
+        edition_status = None  # для replaced/cancelled не применимо
+
     existing = db.get("norms", {}).get(doc_number)
 
     if existing:
         changed = False
         if existing.get("status") != db_status:
             existing["status"] = db_status
+            changed = True
+        # Сохраняем детальный статус редакции
+        if edition_status is not None:
+            if existing.get("edition_status") != edition_status:
+                existing["edition_status"] = edition_status
+                changed = True
+        elif "edition_status" in existing and db_status in ("replaced", "cancelled"):
+            # Для заменённых/отменённых — убираем edition_status (неприменимо)
+            del existing["edition_status"]
             changed = True
         new_version = check.get("current_version")
         if new_version and new_version != existing.get("current_version"):
@@ -367,6 +834,9 @@ def merge_norm_check(db: dict, check: dict, project_id: str) -> str:
             "last_verified": now,
             "verified_by": f"websearch:{project_id}",
         }
+        # Сохраняем детальный статус редакции
+        if edition_status is not None:
+            new_entry["edition_status"] = edition_status
         db["norms"][doc_number] = new_entry
         replacement = check.get("replacement_doc")
         if replacement and db_status in ("replaced", "cancelled"):

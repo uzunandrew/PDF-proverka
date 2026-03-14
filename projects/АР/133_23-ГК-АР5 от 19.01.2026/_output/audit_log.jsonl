@@ -580,3 +580,122 @@
 {"timestamp": "2026-03-13T03:47:30.670543", "level": "info", "stage": "optimization", "message": ""}
 {"timestamp": "2026-03-13T03:47:30.671332", "level": "info", "stage": "optimization", "message": "**estimated_savings_pct = 0** — невозможно дать средневзвешенную оценку без сметных данных (альбом АР5 не содержит смету)."}
 {"timestamp": "2026-03-13T03:47:30.690480", "level": "info", "stage": "optimization", "message": "Оптимизация завершена: 14 предложений, ~0% средняя экономия (16.8 KB)"}
+{"timestamp": "2026-03-14T01:49:32.374858", "level": "info", "stage": "crop_blocks", "message": "═══ ЭТАП 1: Кроп image-блоков из PDF ═══"}
+{"timestamp": "2026-03-14T01:49:33.050862", "level": "info", "stage": "crop_blocks", "message": "  OCR result: 133_23-ГК-АР5 от 19.01.2026_result.json"}
+{"timestamp": "2026-03-14T01:49:33.051974", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 6G9Q-PTW6-Q93: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.052780", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4N7Q-PEPD-FXQ: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.053582", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4DCW-XUCF-R7W: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.054368", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9DXT-M3PT-7GJ: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.055361", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 6HHN-PVLQ-DVT: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.056393", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9LCN-AQ67-NAW: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.057276", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 6WMW-399N-FRP: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.058108", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4D67-QAP3-4LQ: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.058929", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4DVP-HK6M-GTJ: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.059728", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 7LQX-7VW4-9H7: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.060538", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] X3RR-VE4U-GN6: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.061346", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4GXN-RNGT-J9N: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.062128", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 63MD-PGVU-N63: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.062934", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] MR9J-FX9P-3X6: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.063708", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9TCR-FGU4-JCG: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.064515", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4LK6-MAJ7-K7Y: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.065294", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] A4ET-LQWY-GTQ: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.066070", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 6MNH-4WFH-GV3: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.066847", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9CCP-F4E6-4RM: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.067620", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 7UYJ-FRQL-P47: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.068393", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 6CYX-WY67-CCX: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:33.069177", "level": "info", "stage": "crop_blocks", "message": "  Image-блоков для скачивания: 90"}
+{"timestamp": "2026-03-14T01:49:33.069961", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 99KA-WJUL-QDH (506 KB)"}
+{"timestamp": "2026-03-14T01:49:33.070750", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4A6N-TW6H-6FH (135 KB)"}
+{"timestamp": "2026-03-14T01:49:33.071528", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7NFX-N9DE-F7U (329 KB)"}
+{"timestamp": "2026-03-14T01:49:33.072296", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] PXHL-WHKU-99G (117 KB)"}
+{"timestamp": "2026-03-14T01:49:33.073066", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 43A6-VPPP-77W (440 KB)"}
+{"timestamp": "2026-03-14T01:49:33.073840", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4DMN-CPP7-9PY (370 KB)"}
+{"timestamp": "2026-03-14T01:49:33.074604", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] GPDL-7P7D-374 (170 KB)"}
+{"timestamp": "2026-03-14T01:49:33.075393", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 64EC-VPTE-CJT (147 KB)"}
+{"timestamp": "2026-03-14T01:49:33.076201", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 449E-EEDD-QN6 (524 KB)"}
+{"timestamp": "2026-03-14T01:49:33.076988", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6K39-JCTE-KC9 (186 KB)"}
+{"timestamp": "2026-03-14T01:49:33.077793", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4MML-446U-QWY (190 KB)"}
+{"timestamp": "2026-03-14T01:49:33.078637", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9DQX-QPM4-3AY (572 KB)"}
+{"timestamp": "2026-03-14T01:49:33.079449", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4DKK-NX6X-VET (138 KB)"}
+{"timestamp": "2026-03-14T01:49:33.080282", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9YMR-74AK-DHW (1001 KB)"}
+{"timestamp": "2026-03-14T01:49:33.081066", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4WHL-GK7T-PHA (152 KB)"}
+{"timestamp": "2026-03-14T01:49:33.081850", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] AAHU-WYDV-M6E (374 KB)"}
+{"timestamp": "2026-03-14T01:49:33.082645", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] DURC-39X9-D96 (399 KB)"}
+{"timestamp": "2026-03-14T01:49:33.083459", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7Y64-VUYC-49V (256 KB)"}
+{"timestamp": "2026-03-14T01:49:33.084247", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4GRX-VKHX-TUK (117 KB)"}
+{"timestamp": "2026-03-14T01:49:33.085033", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] T9WQ-VE6H-9UK (228 KB)"}
+{"timestamp": "2026-03-14T01:49:33.085918", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4CFV-KCVQ-RRU (124 KB)"}
+{"timestamp": "2026-03-14T01:49:33.086696", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6GEN-PHGP-KYD (122 KB)"}
+{"timestamp": "2026-03-14T01:49:33.087478", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7KYH-WGW7-D6J (148 KB)"}
+{"timestamp": "2026-03-14T01:49:33.088257", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] LX33-9MEC-R6G (120 KB)"}
+{"timestamp": "2026-03-14T01:49:33.089049", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7VUF-PJ43-DJQ (64 KB)"}
+{"timestamp": "2026-03-14T01:49:33.089837", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7M6D-N7YF-63E (117 KB)"}
+{"timestamp": "2026-03-14T01:49:33.090629", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] LXDA-LLAR-XXC (123 KB)"}
+{"timestamp": "2026-03-14T01:49:33.091414", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4A7N-WGY4-CJC (102 KB)"}
+{"timestamp": "2026-03-14T01:49:33.092205", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4YCV-VAAX-CN3 (218 KB)"}
+{"timestamp": "2026-03-14T01:49:33.093020", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4TU4-CKPQ-RWP (124 KB)"}
+{"timestamp": "2026-03-14T01:49:33.093811", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9E3H-39LM-96N (101 KB)"}
+{"timestamp": "2026-03-14T01:49:33.094591", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 73P4-T9MJ-TDM (98 KB)"}
+{"timestamp": "2026-03-14T01:49:33.095397", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9EFJ-QKH6-YN3 (121 KB)"}
+{"timestamp": "2026-03-14T01:49:33.096191", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] A73Q-DEQY-CGL (93 KB)"}
+{"timestamp": "2026-03-14T01:49:33.096979", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] JWY6-R6DL-3RY (119 KB)"}
+{"timestamp": "2026-03-14T01:49:33.097756", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 74Y9-PCLK-AK7 (167 KB)"}
+{"timestamp": "2026-03-14T01:49:33.098533", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4UD7-GARN-9FK (135 KB)"}
+{"timestamp": "2026-03-14T01:49:33.099311", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 64VN-E4D9-FR4 (188 KB)"}
+{"timestamp": "2026-03-14T01:49:33.100087", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 66FJ-TTUE-NXC (121 KB)"}
+{"timestamp": "2026-03-14T01:49:33.100872", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7K6F-WVU9-RM4 (302 KB)"}
+{"timestamp": "2026-03-14T01:49:33.101645", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9YNN-NUQE-T99 (207 KB)"}
+{"timestamp": "2026-03-14T01:49:33.102429", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9MMY-UGKK-JPY (214 KB)"}
+{"timestamp": "2026-03-14T01:49:33.103345", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7QRT-XCX3-G3T (196 KB)"}
+{"timestamp": "2026-03-14T01:49:33.104145", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7EKA-476J-UR4 (181 KB)"}
+{"timestamp": "2026-03-14T01:49:33.104931", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6R43-FAHP-JPW (197 KB)"}
+{"timestamp": "2026-03-14T01:49:33.105706", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7N9E-NXHW-4T3 (138 KB)"}
+{"timestamp": "2026-03-14T01:49:33.106485", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4EAN-7T9H-NM7 (247 KB)"}
+{"timestamp": "2026-03-14T01:49:33.107262", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4M3A-KXEF-WQX (255 KB)"}
+{"timestamp": "2026-03-14T01:49:33.108041", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] KPAU-DCFV-VC9 (308 KB)"}
+{"timestamp": "2026-03-14T01:49:33.108816", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6E9C-KDG9-6DY (102 KB)"}
+{"timestamp": "2026-03-14T01:49:33.109588", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4X3V-RD77-4FW (305 KB)"}
+{"timestamp": "2026-03-14T01:49:33.110354", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6QLG-XVL9-9NJ (137 KB)"}
+{"timestamp": "2026-03-14T01:49:33.111193", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4RX6-W4PU-9MF (277 KB)"}
+{"timestamp": "2026-03-14T01:49:33.111966", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7UR6-CNDF-A7U (277 KB)"}
+{"timestamp": "2026-03-14T01:49:33.112737", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9K46-7KGF-7VE (366 KB)"}
+{"timestamp": "2026-03-14T01:49:33.113508", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] Q9N4-4GDQ-WQE (214 KB)"}
+{"timestamp": "2026-03-14T01:49:33.114275", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4H4U-DCAK-KEE (366 KB)"}
+{"timestamp": "2026-03-14T01:49:33.115043", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] WLFG-YWF9-KEV (108 KB)"}
+{"timestamp": "2026-03-14T01:49:33.115810", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4VE7-E7EA-CKK (227 KB)"}
+{"timestamp": "2026-03-14T01:49:33.116578", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4QQJ-UHKN-CUU (257 KB)"}
+{"timestamp": "2026-03-14T01:49:33.117338", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4976-GHL3-RQL (81 KB)"}
+{"timestamp": "2026-03-14T01:49:33.118116", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9KP9-PHGM-KVX (112 KB)"}
+{"timestamp": "2026-03-14T01:49:33.118893", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] UUR6-QRJX-CVJ (107 KB)"}
+{"timestamp": "2026-03-14T01:49:33.119664", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] RUNR-W7YN-JUD (54 KB)"}
+{"timestamp": "2026-03-14T01:49:33.120433", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7UPM-G3KQ-RHP (69 KB)"}
+{"timestamp": "2026-03-14T01:49:33.121197", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 43EX-WYD7-KPU (71 KB)"}
+{"timestamp": "2026-03-14T01:49:33.121963", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7PLN-TF3R-TUK (46 KB)"}
+{"timestamp": "2026-03-14T01:49:33.122757", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] KKKX-D3TF-UUK (42 KB)"}
+{"timestamp": "2026-03-14T01:49:33.123525", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 46AJ-YT3V-FKA (29 KB)"}
+{"timestamp": "2026-03-14T01:49:33.124288", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4H4D-GNGF-K96 (85 KB)"}
+{"timestamp": "2026-03-14T01:49:33.125055", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7D99-EFAU-FVC (79 KB)"}
+{"timestamp": "2026-03-14T01:49:33.125821", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 47NL-6CXY-KAU (115 KB)"}
+{"timestamp": "2026-03-14T01:49:33.126654", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7UV4-3V3E-YWK (84 KB)"}
+{"timestamp": "2026-03-14T01:49:33.127447", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6RUY-6L9E-PDY (48 KB)"}
+{"timestamp": "2026-03-14T01:49:33.128220", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6UK4-FPPL-N7H (50 KB)"}
+{"timestamp": "2026-03-14T01:49:33.128991", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 74QX-PETC-RT3 (176 KB)"}
+{"timestamp": "2026-03-14T01:49:33.129760", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] A9YH-HVXG-EHY (1004 KB)"}
+{"timestamp": "2026-03-14T01:49:33.130528", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] JUFH-XNHL-LJE: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:33.131292", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 76LH-R97E-JFR (231 KB)"}
+{"timestamp": "2026-03-14T01:49:33.132064", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 47Y9-AXEJ-9HY: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:33.132834", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4NGW-VAER-3F7 (935 KB)"}
+{"timestamp": "2026-03-14T01:49:33.133603", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6EGE-9JMW-94H (145 KB)"}
+{"timestamp": "2026-03-14T01:49:33.134369", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 99AV-U3W7-9WH (559 KB)"}
+{"timestamp": "2026-03-14T01:49:33.135141", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4CDD-377V-WHM (277 KB)"}
+{"timestamp": "2026-03-14T01:49:33.135906", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4PYF-DC4K-4QJ (30 KB)"}
+{"timestamp": "2026-03-14T01:49:33.136674", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 6H7D-J7FP-JXN (27 KB)"}
+{"timestamp": "2026-03-14T01:49:33.137465", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 7FNV-7CNV-RLL (28 KB)"}
+{"timestamp": "2026-03-14T01:49:33.138232", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 9UKG-D4JR-F9E (29 KB)"}
+{"timestamp": "2026-03-14T01:49:33.139000", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 93CK-DUDJ-Q3J (71 KB)"}
+{"timestamp": "2026-03-14T01:49:33.139772", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 43UD-7U97-EMD (57 KB)"}
+{"timestamp": "2026-03-14T01:49:33.140540", "level": "info", "stage": "crop_blocks", "message": ""}
+{"timestamp": "2026-03-14T01:49:33.141306", "level": "info", "stage": "crop_blocks", "message": "  Итого: 88 блоков (0 скачано, 88 пропущено, 2 ошибок)"}
+{"timestamp": "2026-03-14T01:49:33.142088", "level": "info", "stage": "crop_blocks", "message": "  Index: projects\\АР\\133_23-ГК-АР5 от 19.01.2026\\_output\\blocks\\index.json"}
+{"timestamp": "2026-03-14T01:49:33.142901", "level": "info", "stage": "crop_blocks", "message": "{\"total_blocks\": 88, \"cropped\": 0, \"skipped\": 88, \"errors\": 2}"}
+{"timestamp": "2026-03-14T01:49:33.153176", "level": "error", "stage": "crop_blocks", "message": "Исключение: Кроп блоков: "}

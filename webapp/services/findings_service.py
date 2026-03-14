@@ -137,21 +137,41 @@ def get_finding_block_map(project_id: str) -> Optional[dict]:
         matched_blocks: list[str] = []
         seen: set[str] = set()
 
-        # 1. Явные block_id в description
-        desc = f.get("description", "")
-        for m in block_id_re.finditer(desc):
-            bid = m.group(1)
-            if bid in all_block_ids and bid not in seen:
-                matched_blocks.append(bid)
-                seen.add(bid)
-
-        # 2. По страницам из sheet
-        pages = _parse_pages_from_text(f.get("sheet", ""))
-        for page in sorted(pages):
-            for bid in blocks_by_page.get(page, []):
-                if bid not in seen:
+        # 1. evidence array (наивысший приоритет — точная трассировка)
+        evidence = f.get("evidence")
+        if evidence and isinstance(evidence, list):
+            for ev in evidence:
+                bid = ev.get("block_id", "")
+                if ev.get("type") == "image" and bid in all_block_ids and bid not in seen:
                     matched_blocks.append(bid)
                     seen.add(bid)
+
+        # 2. related_block_ids (fallback от evidence)
+        if not matched_blocks:
+            related = f.get("related_block_ids")
+            if related and isinstance(related, list):
+                for bid in related:
+                    if bid in all_block_ids and bid not in seen:
+                        matched_blocks.append(bid)
+                        seen.add(bid)
+
+        # 2. Явные block_id в description (fallback)
+        if not matched_blocks:
+            desc = f.get("description", "")
+            for m in block_id_re.finditer(desc):
+                bid = m.group(1)
+                if bid in all_block_ids and bid not in seen:
+                    matched_blocks.append(bid)
+                    seen.add(bid)
+
+        # 3. По страницам из sheet (последний fallback)
+        if not matched_blocks:
+            pages = _parse_pages_from_text(f.get("sheet", ""))
+            for page in sorted(pages):
+                for bid in blocks_by_page.get(page, []):
+                    if bid not in seen:
+                        matched_blocks.append(bid)
+                        seen.add(bid)
 
         if matched_blocks:
             result[fid] = matched_blocks

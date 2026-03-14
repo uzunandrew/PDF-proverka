@@ -255,6 +255,14 @@ def crop_blocks(
     print(f"\n  Итого: {len(index_blocks)} блоков ({cropped} скачано, "
           f"{skipped} пропущено, {errors} ошибок)")
     print(f"  Index: {index_path}")
+
+    # Обогатить document_graph.json данными из index.json
+    try:
+        from process_project import enrich_document_graph
+        enrich_document_graph(str(output_dir.parent))  # output_dir = _output/blocks, parent = _output
+    except Exception as e:
+        print(f"  [WARN] Не удалось обогатить document_graph: {e}")
+
     return result
 
 

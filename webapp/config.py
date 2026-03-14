@@ -29,6 +29,8 @@ OPTIMIZATION_TASK_TEMPLATE = BASE_DIR / ".claude" / "optimization_task.md"
 TEXT_ANALYSIS_TASK_TEMPLATE = BASE_DIR / ".claude" / "text_analysis_task.md"
 BLOCK_ANALYSIS_TASK_TEMPLATE = BASE_DIR / ".claude" / "block_analysis_task.md"
 FINDINGS_MERGE_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_merge_task.md"
+FINDINGS_CRITIC_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_critic_task.md"
+FINDINGS_CORRECTOR_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_corrector_task.md"
 
 # Скрипты
 PROCESS_PROJECT_SCRIPT = BASE_DIR / "process_project.py"
@@ -92,12 +94,15 @@ CLAUDE_OPTIMIZATION_TIMEOUT = 3600  # 60 мин на оптимизацию
 CLAUDE_TEXT_ANALYSIS_TIMEOUT = 1800   # 30 мин на анализ текста MD
 CLAUDE_BLOCK_ANALYSIS_TIMEOUT = 600   # 10 мин на пакет блоков
 CLAUDE_FINDINGS_MERGE_TIMEOUT = 1800  # 30 мин на свод замечаний (02_blocks может быть >800KB)
+CLAUDE_FINDINGS_CRITIC_TIMEOUT = 600   # 10 мин — critic проверяет готовые замечания
+CLAUDE_FINDINGS_CORRECTOR_TIMEOUT = 600  # 10 мин — corrector исправляет по вердиктам
 
 # Инструменты для Claude CLI сессий
 NORM_VERIFY_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 TEXT_ANALYSIS_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 BLOCK_ANALYSIS_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 FINDINGS_MERGE_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
+FINDINGS_REVIEW_TOOLS = "Read,Write,Grep,Glob"
 
 # Модель Claude CLI (sonnet = экономит лимит All models)
 # Варианты: "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"
@@ -113,6 +118,8 @@ _stage_models: dict[str, str | None] = {
     "text_analysis":   None,           # Sonnet — структурная задача
     "block_batch":     None,           # Sonnet — чтение чертежей, заполнение JSON
     "findings_merge":  "claude-opus-4-6",  # Opus — межблочная сверка, дедупликация
+    "findings_critic": None,           # Sonnet — проверка grounding+evidence
+    "findings_corrector": None,        # Sonnet — исправление по вердиктам критика
     "norm_verify":     None,           # Sonnet — поиск и сверка норм
     "norm_fix":        None,           # Sonnet — пересмотр по нормам
     "optimization":    "claude-opus-4-6",  # Opus — глубокий анализ оптимизаций

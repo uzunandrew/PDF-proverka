@@ -9,12 +9,14 @@ from webapp.config import (
     CLAUDE_CLI,
     NORM_VERIFY_TOOLS,
     TEXT_ANALYSIS_TOOLS, BLOCK_ANALYSIS_TOOLS, FINDINGS_MERGE_TOOLS,
+    FINDINGS_REVIEW_TOOLS,
     TILE_AUDIT_TOOLS, MAIN_AUDIT_TOOLS, TRIAGE_TOOLS, SMART_MERGE_TOOLS,
     get_claude_model, get_model_for_stage,
     CLAUDE_NORM_VERIFY_TIMEOUT, CLAUDE_NORM_FIX_TIMEOUT,
     CLAUDE_OPTIMIZATION_TIMEOUT,
     CLAUDE_TEXT_ANALYSIS_TIMEOUT, CLAUDE_BLOCK_ANALYSIS_TIMEOUT,
     CLAUDE_FINDINGS_MERGE_TIMEOUT,
+    CLAUDE_FINDINGS_CRITIC_TIMEOUT, CLAUDE_FINDINGS_CORRECTOR_TIMEOUT,
     CLAUDE_BATCH_TIMEOUT, CLAUDE_AUDIT_TIMEOUT,
     CLAUDE_TRIAGE_TIMEOUT, CLAUDE_SMART_MERGE_TIMEOUT,
 )
@@ -31,6 +33,8 @@ from webapp.services.task_builder import (
     prepare_text_analysis_task,
     prepare_block_batch_task,
     prepare_findings_merge_task,
+    prepare_findings_critic_task,
+    prepare_findings_corrector_task,
     prepare_tile_batch_task,
     prepare_main_audit_task,
     prepare_triage_task,
@@ -51,9 +55,11 @@ __all__ = [
     "run_optimization",
     # runners — блоковый пайплайн
     "run_text_analysis", "run_block_batch", "run_findings_merge",
+    "run_findings_critic", "run_findings_corrector",
     # task_builder — блоковый пайплайн
     "prepare_text_analysis_task", "prepare_block_batch_task",
     "prepare_findings_merge_task",
+    "prepare_findings_critic_task", "prepare_findings_corrector_task",
     # legacy stubs (перенаправляют на новый пайплайн)
     "prepare_tile_batch_task", "prepare_main_audit_task",
     "prepare_triage_task", "prepare_smart_merge_task",
@@ -184,6 +190,28 @@ async def run_findings_merge(
     """Запустить Claude CLI для свода замечаний из текста + блоков."""
     task_text = prepare_findings_merge_task(project_info, project_id)
     return await _run_cli(task_text, FINDINGS_MERGE_TOOLS, CLAUDE_FINDINGS_MERGE_TIMEOUT, on_output, stage="findings_merge", project_id=project_id)
+
+
+# ─── Critic + Corrector (проверка замечаний) ───
+
+async def run_findings_critic(
+    project_info: dict,
+    project_id: str,
+    on_output: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> tuple[int, str, CLIResult]:
+    """Запустить Claude CLI для критической проверки замечаний (Critic)."""
+    task_text = prepare_findings_critic_task(project_info, project_id)
+    return await _run_cli(task_text, FINDINGS_REVIEW_TOOLS, CLAUDE_FINDINGS_CRITIC_TIMEOUT, on_output, stage="findings_critic", project_id=project_id)
+
+
+async def run_findings_corrector(
+    project_info: dict,
+    project_id: str,
+    on_output: Optional[Callable[[str], Awaitable[None]]] = None,
+) -> tuple[int, str, CLIResult]:
+    """Запустить Claude CLI для корректировки замечаний по вердиктам критика (Corrector)."""
+    task_text = prepare_findings_corrector_task(project_info, project_id)
+    return await _run_cli(task_text, FINDINGS_REVIEW_TOOLS, CLAUDE_FINDINGS_CORRECTOR_TIMEOUT, on_output, stage="findings_corrector", project_id=project_id)
 
 
 # ─── Legacy stubs (перенаправляют на блоковый пайплайн) ───

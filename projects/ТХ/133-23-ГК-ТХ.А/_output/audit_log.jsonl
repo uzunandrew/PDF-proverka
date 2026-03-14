@@ -234,3 +234,42 @@
 {"timestamp": "2026-03-13T09:38:00.590754", "level": "info", "stage": "optimization", "message": "2. Колесоотбойники 128 шт. → полимерный композит (~20%)"}
 {"timestamp": "2026-03-13T09:38:00.591635", "level": "info", "stage": "optimization", "message": "3. Вертикальная разметка 206 м² → самоклеящаяся плёнка (−3 дня монтажа)"}
 {"timestamp": "2026-03-13T09:38:00.614082", "level": "info", "stage": "optimization", "message": "Оптимизация завершена: 12 предложений, ~8% средняя экономия (12.9 KB)"}
+{"timestamp": "2026-03-14T01:49:27.403496", "level": "info", "stage": "crop_blocks", "message": "═══ ЭТАП 1: Кроп image-блоков из PDF ═══"}
+{"timestamp": "2026-03-14T01:49:31.404877", "level": "info", "stage": "crop_blocks", "message": "  OCR result: 133-23-ГК-ТХ.А_result.json"}
+{"timestamp": "2026-03-14T01:49:31.406000", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 96W3-6RHW-CCN: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.406887", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 7NUJ-LT3R-4VT: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.407893", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9W74-TEEW-JDH: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.409149", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9P9V-WJE6-LF4: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.410132", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] X3JH-46Q4-P7U: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.411137", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 4LCH-PVD9-9DP: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.412047", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 9RH3-VAGT-K7R: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.412980", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 7NHU-RFC9-HDR: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.413880", "level": "info", "stage": "crop_blocks", "message": "  [SKIP] 7NC6-3G9M-9PD: штамп (category_code=stamp)"}
+{"timestamp": "2026-03-14T01:49:31.414813", "level": "info", "stage": "crop_blocks", "message": "  Image-блоков для скачивания: 22"}
+{"timestamp": "2026-03-14T01:49:31.415731", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 4JAJ-VJKM-LMA (487 KB)"}
+{"timestamp": "2026-03-14T01:49:31.416605", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 43FC-NGPR-3UR: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.417471", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] XFPQ-AH7L-WRA: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.418314", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 4L9T-NHQG-NHA: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.419148", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 6K7W-HHND-EQX: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.419990", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 6GLY-NHRM-ED7: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.420833", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 9HHD-PDWK-MMW: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.421674", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 6FC3-EEYP-WM7: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.422507", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 6UQD-LUVK-LGQ: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.423346", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] L9G6-7KGR-WAW: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.424215", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 7GD9-JGP7-LKW: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.425086", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 76ET-EY4Q-DXE: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.425962", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] WEV4-QWJ7-CMA: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.426836", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 4NPA-P4P7-YXN: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.427723", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 4XXQ-GWRK-6X3: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.428576", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] ACJE-MCT3-TJ9: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.429421", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 7AKU-EHTN-R63: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.430272", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] W3GD-4KH9-PUA: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.431154", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] YXUT-KE4K-ULC: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.432014", "level": "info", "stage": "crop_blocks", "message": "  [ERROR] 4FKP-WLFU-7NV: HTTP Error 404: Not Found"}
+{"timestamp": "2026-03-14T01:49:31.432875", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] 49Y6-GL6V-69J (551 KB)"}
+{"timestamp": "2026-03-14T01:49:31.433749", "level": "info", "stage": "crop_blocks", "message": "  [EXISTS] ADHV-MGJL-QKP (119 KB)"}
+{"timestamp": "2026-03-14T01:49:31.434597", "level": "info", "stage": "crop_blocks", "message": ""}
+{"timestamp": "2026-03-14T01:49:31.435475", "level": "info", "stage": "crop_blocks", "message": "  Итого: 3 блоков (0 скачано, 3 пропущено, 19 ошибок)"}
+{"timestamp": "2026-03-14T01:49:31.436366", "level": "info", "stage": "crop_blocks", "message": "  Index: projects\\ТХ\\133-23-ГК-ТХ.А\\_output\\blocks\\index.json"}
+{"timestamp": "2026-03-14T01:49:31.437248", "level": "info", "stage": "crop_blocks", "message": "{\"total_blocks\": 3, \"cropped\": 0, \"skipped\": 3, \"errors\": 19}"}
+{"timestamp": "2026-03-14T01:49:31.454572", "level": "error", "stage": "crop_blocks", "message": "Исключение: Кроп блоков: "}
