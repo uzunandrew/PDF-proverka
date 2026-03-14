@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="/static/css/styles.css?v=70">
+    <link rel="stylesheet" href="/static/css/styles.css?v=72">
 </head>
 <body>
     <div id="app">
@@ -849,7 +849,12 @@
                                             {{ f.severity }}
                                         </span>
                                     </td>
-                                    <td>{{ f.sheet }}</td>
+                                    <td>
+                                        <div>{{ f.sheet }}</div>
+                                        <div v-if="f.page" style="font-size:11px; opacity:0.55; margin-top:2px">
+                                            стр. PDF {{ Array.isArray(f.page) ? f.page.join(', ') : f.page }}
+                                        </div>
+                                    </td>
                                     <td class="desc-cell">{{ f.problem || f.finding || f.description || '' }}</td>
                                     <td class="norm-cell">{{ f.norm }}</td>
                                     <td class="rec-cell">{{ f.solution || f.recommendation || '' }}</td>
@@ -942,12 +947,23 @@
                                         </span>
                                     </td>
                                     <td>
-                                        <div class="opt-section" v-if="item.section">{{ item.section }}</div>
+                                        <div class="opt-section" v-if="item.section">
+                                            {{ item.section }}
+                                            <span v-if="item.page" style="font-size:11px; opacity:0.55; margin-left:4px">
+                                                (стр. PDF {{ Array.isArray(item.page) ? item.page.join(', ') : item.page }})
+                                            </span>
+                                        </div>
                                         {{ item.current }}
+                                        <div v-if="item.spec_items && item.spec_items.length" class="opt-spec-items">
+                                            <div v-for="si in item.spec_items" :key="si" class="opt-spec-item">{{ si }}</div>
+                                        </div>
                                     </td>
                                     <td class="opt-proposed">{{ item.proposed }}</td>
                                     <td class="opt-savings-cell">
                                         <span class="opt-savings-badge" v-if="item.savings_pct">~{{ item.savings_pct }}%</span>
+                                        <div v-if="item.savings_basis && item.savings_basis !== 'не определено'" style="font-size:10px; opacity:0.5; margin-top:2px">
+                                            {{ item.savings_basis }}
+                                        </div>
                                     </td>
                                     <td class="opt-risks">{{ item.risks }}</td>
                                     <td class="opt-norm">{{ item.norm || '—' }}</td>

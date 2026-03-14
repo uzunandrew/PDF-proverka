@@ -11,6 +11,14 @@ from webapp.services.project_service import resolve_project_dir
 router = APIRouter(prefix="/api/optimization", tags=["optimization"])
 
 
+@router.get("/summary/all")
+async def get_all_optimization_summaries():
+    """Сводка оптимизаций по всем проектам."""
+    from webapp.services.findings_service import get_all_optimization_summaries as _get_all
+    summaries = _get_all()
+    return {"summaries": summaries}
+
+
 @router.post("/{project_id}/run")
 async def start_optimization(project_id: str):
     """Запустить анализ оптимизации проектной документации."""

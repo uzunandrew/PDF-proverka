@@ -2364,6 +2364,15 @@ a:hover { color: var(--text-bright); }
     color: var(--text-muted);
     margin-bottom: 2px;
 }
+.opt-spec-items { margin-top: 4px; }
+.opt-spec-item {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 1px 0;
+    border-left: 2px solid var(--cyan-dim, rgba(0,255,255,0.2));
+    padding-left: 6px;
+    margin-top: 2px;
+}
 .opt-proposed { color: var(--emerald); }
 .opt-savings-badge {
     font-family: var(--font-mono);

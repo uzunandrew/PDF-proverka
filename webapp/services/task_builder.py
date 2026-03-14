@@ -17,6 +17,7 @@ from webapp.config import (
     TEXT_ANALYSIS_TASK_TEMPLATE, BLOCK_ANALYSIS_TASK_TEMPLATE,
     FINDINGS_MERGE_TASK_TEMPLATE,
     FINDINGS_CRITIC_TASK_TEMPLATE, FINDINGS_CORRECTOR_TASK_TEMPLATE,
+    OPTIMIZATION_CRITIC_TASK_TEMPLATE, OPTIMIZATION_CORRECTOR_TASK_TEMPLATE,
 )
 from webapp.services.cli_utils import load_template
 from webapp.services import discipline_service
@@ -987,6 +988,54 @@ def prepare_optimization_task(
     vendor_list_text = _load_vendor_list_for_discipline(section)
 
     template = _inject_discipline(template, project_info)
+
+    task = (
+        template
+        .replace("{PROJECT_ID}", project_id)
+        .replace("{OUTPUT_PATH}", output_path)
+        .replace("{MD_FILE_PATH}", md_file_path)
+        .replace("{VENDOR_LIST}", vendor_list_text)
+    )
+    return task
+
+
+def prepare_optimization_critic_task(
+    project_info: dict,
+    project_id: str,
+) -> str:
+    """Подготовить задачу для критической проверки оптимизации (Critic)."""
+    template = load_template(OPTIMIZATION_CRITIC_TASK_TEMPLATE)
+
+    _, output_path = _get_project_paths(project_id)
+    md_file_path = _get_md_file_path(project_info, project_id)
+
+    # Вендор-лист — отфильтрованный по дисциплине
+    section = (project_info or {}).get("section", "EM")
+    vendor_list_text = _load_vendor_list_for_discipline(section)
+
+    task = (
+        template
+        .replace("{PROJECT_ID}", project_id)
+        .replace("{OUTPUT_PATH}", output_path)
+        .replace("{MD_FILE_PATH}", md_file_path)
+        .replace("{VENDOR_LIST}", vendor_list_text)
+    )
+    return task
+
+
+def prepare_optimization_corrector_task(
+    project_info: dict,
+    project_id: str,
+) -> str:
+    """Подготовить задачу для корректировки оптимизации по вердиктам критика (Corrector)."""
+    template = load_template(OPTIMIZATION_CORRECTOR_TASK_TEMPLATE)
+
+    _, output_path = _get_project_paths(project_id)
+    md_file_path = _get_md_file_path(project_info, project_id)
+
+    # Вендор-лист — отфильтрованный по дисциплине
+    section = (project_info or {}).get("section", "EM")
+    vendor_list_text = _load_vendor_list_for_discipline(section)
 
     task = (
         template

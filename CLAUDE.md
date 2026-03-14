@@ -88,6 +88,8 @@ pip install -r webapp/requirements.txt
 │   │           ├── norm_checks.json       ← результат верификации норм
 │   │           ├── norm_checks_llm.json   ← LLM-часть верификации (временный)
 │   │           ├── optimization.json      ← сценарии оптимизации
+│   │           ├── optimization_review.json  ← вердикты critic оптимизации
+│   │           ├── optimization_pre_review.json ← бэкап до корректировки
 │   │           └── pipeline_log.json      ← wall-clock время этапов
 │   └── DOC/                          ← общие документы (вендор лист и др.)
 ├── disciplines/                      ← профили дисциплин
@@ -127,7 +129,7 @@ FastAPI на порту 8080. Запуск: `cd webapp && python main.py`
 
 **Ключевые параметры:** таймаут пакета 600с, аудита 3600с, до 3 параллельных Claude-сессий. `OBJECT_NAME` в config.py — название объекта на дашборде.
 
-**Гибридные модели per-stage:** `config.py` → `_stage_models` задаёт модель для каждого этапа. Sonnet (по умолчанию) для структурных задач, Opus для findings_merge и optimization. `findings_critic` и `findings_corrector` используют Sonnet (структурные проверки). API: `GET/POST /api/audit/model/stages`.
+**Гибридные модели per-stage:** `config.py` → `_stage_models` задаёт модель для каждого этапа. Sonnet (по умолчанию) для структурных задач, Opus для findings_merge и optimization. Все critic/corrector (findings и optimization) используют Sonnet. API: `GET/POST /api/audit/model/stages`.
 
 **Batch queue:** `pipeline_service.py` поддерживает групповые действия — последовательный аудит выбранных проектов. Очередь динамическая: можно добавлять проекты в работающую очередь через `POST /api/audit/batch/add`. Цикл обработки — `while`, не `for`, чтобы подхватывать добавленные элементы.
 
@@ -206,6 +208,14 @@ Vue 3 SPA (Composition API) без сборки — CDN-загрузка. Оди
 [04] Верификация норм → norm_checks.json
      Python: детерминированная проверка из norms_db.json
      LLM: только для unknown/stale норм (WebSearch) + цитаты
+
+[05] Оптимизация → optimization.json (Opus, 60 мин)
+  ↓  Анализ спецификаций, замена аналогов, упрощение монтажа
+  ↓  Учёт вендор-листа и замечаний аудита
+  ↓
+[05b] Optimization Critic → Corrector (условно)
+     Critic: vendor, savings, traceability, конфликты с findings
+     Corrector: исправление или удаление необоснованных предложений
 ```
 
 ### Пакетный анализ блоков
@@ -242,6 +252,44 @@ blocks.py crop → blocks/ + index.json → blocks.py batches → block_batches.
 - `phantom_block` → удалить несуществующие block_id
 - `page_mismatch` → исправить page/sheet
 - `contradicts_text` → удалить или переформулировать
+
+### Система проверки оптимизации (Optimization Critic → Corrector)
+
+Аналогично findings, оптимизационные предложения проходят валидацию:
+
+**Optimization Critic** (`optimization_critic_task.md`) — 5 проверок каждого OPT-предложения:
+1. Вендор-лист: предложенный производитель есть в допустимом списке?
+2. Конфликт с замечаниями аудита: нет ли КРИТИЧЕСКОГО/ЭКОНОМИЧЕСКОГО замечания на эту позицию?
+3. Реалистичность savings_pct: соответствует ли savings_basis?
+4. Привязка к документу: spec_items + page заполнены и корректны?
+5. Техническая обоснованность: конкретное предложение, не нарушает нормы
+
+Вердикты: `pass`, `vendor_violation`, `conflicts_with_finding`, `unrealistic_savings`, `no_traceability`, `wrong_page`, `too_vague`, `technical_issue`
+
+**Optimization Corrector** (`optimization_corrector_task.md`) — запускается условно:
+- `vendor_violation` → заменить на аналог из вендор-листа или удалить
+- `conflicts_with_finding` → удалить (КРИТИЧЕСКОЕ) или пометить как обязательное исправление
+- `unrealistic_savings` → снизить savings_pct до реалистичного
+- `no_traceability` / `too_vague` → конкретизировать или удалить
+
+Результат: `optimization_review.json` (вердикты) + исправленный `optimization.json`
+
+**Ключевые поля оптимизации** (добавлены в `optimization_task.md`):
+- `spec_items[]` — конкретные позиции спецификации: `["Поз. 5 — Кабель ВВГнг(А)-FRLS 5x10"]`
+- `savings_basis` — `"расчёт"` / `"экспертная оценка"` / `"не определено"`
+- `page` — номер страницы PDF (число или массив)
+- `sheet` — номер листа из штампа (НЕ путать с page!)
+
+**Cross-project агрегация:** `GET /api/optimization/summary/all` — сводка оптимизаций по всем проектам (количество, типы, средняя экономия, статус review)
+
+### Разделение sheet и page в замечаниях
+
+`sheet` (лист из штампа) и `page` (страница PDF) — разные поля. Лист 7 из штампа может быть на стр. PDF 12.
+
+- `findings_service.py` → `_enrich_sheet_page()` обогащает findings из `document_graph.json`
+- Маппинг `page → sheet_no` строится из `document_graph.json` → `pages[].sheet_no`
+- Старый формат "Лист X (стр. PDF N)" парсится автоматически (fallback)
+- На фронтенде: лист сверху, страница PDF мелким шрифтом снизу
 
 ### Evidence-трассировка в замечаниях
 
@@ -291,6 +339,8 @@ blocks.py crop → blocks/ + index.json → blocks.py batches → block_batches.
 | Структура документа, текст/блоки по страницам | `document_graph.json` |
 | Вердикты проверки замечаний | `03_findings_review.json` |
 | Статус нормативных документов | `norm_checks.json` |
+| Оптимизационные предложения | `optimization.json` |
+| Вердикты проверки оптимизации | `optimization_review.json` |
 | `03_findings.json` не найден | Сообщить что аудит не завершён |
 
 ## Приоритет источников данных

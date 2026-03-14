@@ -31,6 +31,8 @@ BLOCK_ANALYSIS_TASK_TEMPLATE = BASE_DIR / ".claude" / "block_analysis_task.md"
 FINDINGS_MERGE_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_merge_task.md"
 FINDINGS_CRITIC_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_critic_task.md"
 FINDINGS_CORRECTOR_TASK_TEMPLATE = BASE_DIR / ".claude" / "findings_corrector_task.md"
+OPTIMIZATION_CRITIC_TASK_TEMPLATE = BASE_DIR / ".claude" / "optimization_critic_task.md"
+OPTIMIZATION_CORRECTOR_TASK_TEMPLATE = BASE_DIR / ".claude" / "optimization_corrector_task.md"
 
 # Скрипты
 PROCESS_PROJECT_SCRIPT = BASE_DIR / "process_project.py"
@@ -96,6 +98,8 @@ CLAUDE_BLOCK_ANALYSIS_TIMEOUT = 600   # 10 мин на пакет блоков
 CLAUDE_FINDINGS_MERGE_TIMEOUT = 1800  # 30 мин на свод замечаний (02_blocks может быть >800KB)
 CLAUDE_FINDINGS_CRITIC_TIMEOUT = 600   # 10 мин — critic проверяет готовые замечания
 CLAUDE_FINDINGS_CORRECTOR_TIMEOUT = 600  # 10 мин — corrector исправляет по вердиктам
+CLAUDE_OPTIMIZATION_CRITIC_TIMEOUT = 600   # 10 мин — critic проверяет оптимизацию
+CLAUDE_OPTIMIZATION_CORRECTOR_TIMEOUT = 600  # 10 мин — corrector исправляет оптимизацию
 
 # Инструменты для Claude CLI сессий
 NORM_VERIFY_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
@@ -103,6 +107,7 @@ TEXT_ANALYSIS_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 BLOCK_ANALYSIS_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 FINDINGS_MERGE_TOOLS = "Read,Write,Grep,Glob,WebSearch,WebFetch"
 FINDINGS_REVIEW_TOOLS = "Read,Write,Grep,Glob"
+OPTIMIZATION_REVIEW_TOOLS = "Read,Write,Grep,Glob"
 
 # Модель Claude CLI (sonnet = экономит лимит All models)
 # Варианты: "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"
@@ -123,6 +128,8 @@ _stage_models: dict[str, str | None] = {
     "norm_verify":     None,           # Sonnet — поиск и сверка норм
     "norm_fix":        None,           # Sonnet — пересмотр по нормам
     "optimization":    "claude-opus-4-6",  # Opus — глубокий анализ оптимизаций
+    "optimization_critic": None,           # Sonnet — проверка оптимизаций
+    "optimization_corrector": None,        # Sonnet — корректировка оптимизаций
 }
 
 def get_claude_model() -> str:

@@ -135,7 +135,16 @@
       "Bash(timeout 2)",
       "Bash(rm -f _test_pythonw.txt)",
       "Bash(pythonw -c \":*)",
-      "Bash(start //B pythonw main.py)"
+      "Bash(start //B pythonw main.py)",
+      "Bash(for proj:*)",
+      "Bash(test -f \"d:/Отедел Системного Анализа/1. Calude code/projects/$proj/_output/03_findings.json\")",
+      "Bash(outdir=\"d:/Отедел Системного Анализа/1. Calude code/projects/$proj/_output\")",
+      "Bash(test -f \"$outdir/document_graph.json\")",
+      "Bash(test -f \"$outdir/03_findings_review.json\")",
+      "Bash(test -f \"$outdir/norm_checks.json\")",
+      "Bash(python -X utf8 -c \":*)",
+      "Bash(grep -n \"CLAUDE_OPTIMIZATION_TIMEOUT\\\\|OPTIMIZATION_TIMEOUT\" \"d:/Отедел Системного Анализа/1. Calude code/webapp/services/\"*.py)",
+      "Bash(grep -A2 \"CLAUDE_OPTIMIZATION_TIMEOUT\\\\s*=\" \"d:/Отедел Системного Анализа/1. Calude code/webapp/\"services/*.py)"
     ]
   }
 }

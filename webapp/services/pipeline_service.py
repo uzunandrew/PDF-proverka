@@ -2671,6 +2671,8 @@ class PipelineManager:
                         await self._run_resumed_pipeline(job, resume_info["stage"], resume_info)
                     elif action == "optimization":
                         await self._run_optimization(job)
+                        if job.status == JobStatus.COMPLETED:
+                            await self._run_optimization_review(job)
                     elif action in ("audit", "standard", "pro"):
                         proj_dir = resolve_project_dir(pid)
                         if list(proj_dir.glob("*_result.json")):
@@ -2688,6 +2690,8 @@ class PipelineManager:
                             job.stage = AuditStage.OPTIMIZATION
                             job.status = JobStatus.RUNNING
                             await self._run_optimization(job)
+                            if job.status == JobStatus.COMPLETED:
+                                await self._run_optimization_review(job)
                     else:
                         # fallback: auto-detect
                         proj_dir = resolve_project_dir(pid)
@@ -2985,9 +2989,15 @@ class PipelineManager:
             started_at=datetime.now().isoformat(),
         )
         self.active_jobs[project_id] = job
-        task = asyncio.create_task(self._run_optimization(job))
+        task = asyncio.create_task(self._run_optimization_with_review(job))
         self._tasks[project_id] = task
         return job
+
+    async def _run_optimization_with_review(self, job: AuditJob):
+        """Оптимизация + critic/corrector."""
+        await self._run_optimization(job)
+        if job.status == JobStatus.COMPLETED:
+            await self._run_optimization_review(job)
 
     async def _run_optimization(self, job: AuditJob):
         """Запуск Claude CLI для анализа оптимизации."""
@@ -3089,6 +3099,109 @@ class PipelineManager:
         finally:
             job.completed_at = datetime.now().isoformat()
             self._cleanup(pid)
+
+    async def _run_optimization_review(self, job: AuditJob):
+        """
+        Critic + Corrector для оптимизации: проверка и корректировка предложений.
+
+        1. Critic проверяет каждое OPT-предложение (vendor, savings, traceability)
+        2. Если есть отрицательные вердикты — Corrector исправляет
+        """
+        pid = job.project_id
+        output_dir = resolve_project_dir(pid) / "_output"
+
+        # Загружаем project_info
+        info_path = resolve_project_dir(pid) / "project_info.json"
+        try:
+            with open(info_path, "r", encoding="utf-8") as f:
+                project_info = json.load(f)
+        except Exception:
+            await self._log(job, "Не удалось загрузить project_info.json для optimization review", "warn")
+            return
+
+        # ── Critic ──
+        self._update_pipeline_log(pid, "optimization_critic", "running")
+        print(f"[{pid}] ═══ Optimization Critic (проверка оптимизации) ═══")
+        await self._log(job, "═══ Optimization Critic — проверка обоснованности предложений ═══")
+
+        can_go = await self._check_before_launch(job)
+        if not can_go:
+            await self._log(job, "Rate limit: ожидание превышено или отменено", "warn")
+            return
+
+        exit_code, output, cli_result = await claude_runner.run_optimization_critic(
+            project_info, pid,
+            on_output=lambda msg: self._log(job, msg),
+        )
+        self._record_cli_usage(job, cli_result, "optimization_critic")
+
+        if claude_runner.is_cancelled(exit_code):
+            return
+
+        if exit_code != 0:
+            self._update_pipeline_log(pid, "optimization_critic", "error",
+                                       error=f"Код {exit_code}")
+            await self._log(job, f"Optimization Critic: код {exit_code}, пропуск корректировки", "warn")
+            return
+
+        self._update_pipeline_log(pid, "optimization_critic", "done", message="OK")
+
+        # Проверяем: нужен ли Corrector?
+        review_path = output_dir / "optimization_review.json"
+        if not review_path.exists():
+            await self._log(job, "optimization_review.json не создан — пропуск Corrector", "warn")
+            return
+
+        try:
+            review_data = json.loads(review_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            await self._log(job, "Ошибка чтения optimization_review.json", "warn")
+            return
+
+        verdicts = review_data.get("meta", {}).get("verdicts", {})
+        total_pass = verdicts.get("pass", 0)
+        total_reviewed = review_data.get("meta", {}).get("total_reviewed", 0)
+        total_issues = total_reviewed - total_pass
+
+        await self._log(
+            job,
+            f"Optimization Critic: {total_reviewed} проверено, {total_pass} pass, {total_issues} проблем",
+        )
+
+        if total_issues == 0:
+            await self._log(job, "Все предложения обоснованы — Corrector не требуется")
+            return
+
+        # ── Corrector ──
+        self._update_pipeline_log(pid, "optimization_corrector", "running")
+        print(f"[{pid}] ═══ Optimization Corrector (корректировка оптимизации) ═══")
+        await self._log(
+            job,
+            f"═══ Optimization Corrector — корректировка {total_issues} предложений ═══",
+        )
+
+        can_go = await self._check_before_launch(job)
+        if not can_go:
+            await self._log(job, "Rate limit: ожидание превышено или отменено", "warn")
+            return
+
+        exit_code, output, cli_result = await claude_runner.run_optimization_corrector(
+            project_info, pid,
+            on_output=lambda msg: self._log(job, msg),
+        )
+        self._record_cli_usage(job, cli_result, "optimization_corrector")
+
+        if claude_runner.is_cancelled(exit_code):
+            return
+
+        if exit_code != 0:
+            self._update_pipeline_log(pid, "optimization_corrector", "error",
+                                       error=f"Код {exit_code}")
+            await self._log(job, f"Optimization Corrector: код {exit_code}", "warn")
+            return
+
+        self._update_pipeline_log(pid, "optimization_corrector", "done", message="OK")
+        await self._log(job, "Optimization Corrector завершён — optimization.json обновлён")
 
 
 # Глобальный экземпляр

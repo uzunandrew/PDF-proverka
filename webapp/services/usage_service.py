@@ -305,6 +305,28 @@ class UsageTracker:
                     pass
         return result
 
+    @staticmethod
+    def _get_audit_started_at(project_id: str) -> str | None:
+        """
+        Вернуть timestamp начала текущего аудита из pipeline_log.json.
+        Берём started_at первого этапа (crop_blocks или text_analysis).
+        """
+        log_path = resolve_project_dir(project_id) / "_output" / "pipeline_log.json"
+        if not log_path.exists():
+            return None
+        try:
+            with open(log_path, encoding="utf-8") as f:
+                log = json.load(f)
+        except Exception:
+            return None
+        stages = log.get("stages", {})
+        # Ищем started_at первого этапа по порядку
+        for key in ("crop_blocks", "text_analysis", "block_analysis", "findings_merge"):
+            started = (stages.get(key) or {}).get("started_at")
+            if started:
+                return started
+        return None
+
     # ── Session Reset ────────────────────────────────────────
 
     def reset_session(self):
@@ -323,10 +345,15 @@ class UsageTracker:
     # ── Per-project aggregation ─────────────────────────────
 
     def get_project_usage(self, project_id: str) -> dict:
-        """Агрегация usage по проекту: total + по этапам (stages_summary)."""
+        """Агрегация usage по проекту: total + по этапам (stages_summary).
+        Учитывает только записи текущего прогона (по started_at из pipeline_log)."""
         import re
+        audit_started = self._get_audit_started_at(project_id)
         with _lock:
             project_recs = [r for r in self._records if r.get("project_id") == project_id]
+        # Фильтр: только записи текущего прогона аудита
+        if audit_started and project_recs:
+            project_recs = [r for r in project_recs if r.get("timestamp", "") >= audit_started]
 
         if not project_recs:
             return {
@@ -411,6 +438,12 @@ class UsageTracker:
 
         result = {}
         for pid, recs in projects.items():
+            # Фильтр: только записи текущего прогона аудита
+            audit_started = self._get_audit_started_at(pid)
+            if audit_started:
+                recs = [r for r in recs if r.get("timestamp", "") >= audit_started]
+            if not recs:
+                continue
             t_in, t_out, t_cost, t_calls = self._sum_records(recs)
 
             # stages_summary с duration

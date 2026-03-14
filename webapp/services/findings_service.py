@@ -34,6 +34,7 @@ def get_findings(
         return None
 
     items = data.get("findings", data.get("items", []))
+    _enrich_sheet_page(items, project_id)
     audit_date = data.get("audit_date", data.get("generated_at"))
 
     # Фильтрация
@@ -114,6 +115,56 @@ def get_all_summaries() -> list[FindingsSummary]:
     return summaries
 
 
+def get_all_optimization_summaries() -> list[dict]:
+    """Сводка оптимизаций по всем проектам."""
+    from webapp.services.project_service import iter_project_dirs
+    summaries = []
+    for project_id, entry in iter_project_dirs():
+        opt_path = entry / "_output" / "optimization.json"
+        data = _load_json(opt_path)
+        if data is None:
+            continue
+
+        meta = data.get("meta", {})
+        items = data.get("items", [])
+
+        # Агрегация по типам
+        by_type = {}
+        for item in items:
+            t = item.get("type", "unknown")
+            by_type[t] = by_type.get(t, 0) + 1
+
+        # Статистика savings
+        savings_values = [it.get("savings_pct", 0) for it in items if it.get("savings_pct", 0) > 0]
+        avg_savings = round(sum(savings_values) / len(savings_values), 1) if savings_values else 0
+
+        # Review stats
+        review_path = entry / "_output" / "optimization_review.json"
+        review_data = _load_json(review_path)
+        review_stats = None
+        if review_data:
+            verdicts = review_data.get("meta", {}).get("verdicts", {})
+            review_stats = {
+                "total_reviewed": review_data.get("meta", {}).get("total_reviewed", 0),
+                "pass": verdicts.get("pass", 0),
+                "issues": sum(v for k, v in verdicts.items() if k != "pass"),
+            }
+
+        summaries.append({
+            "project_id": project_id,
+            "total_items": len(items),
+            "by_type": by_type,
+            "estimated_savings_pct": meta.get("estimated_savings_pct", 0),
+            "avg_savings_pct": avg_savings,
+            "top3_summary": meta.get("top3_summary", ""),
+            "analysis_date": meta.get("analysis_date", ""),
+            "review_applied": meta.get("review_applied", False),
+            "review_stats": review_stats,
+        })
+
+    return summaries
+
+
 def get_finding_block_map(project_id: str) -> Optional[dict]:
     """Маппинг finding_id → [block_ids] через совпадение страниц."""
     import re
@@ -183,6 +234,88 @@ def get_finding_block_map(project_id: str) -> Optional[dict]:
     }
 
 
+def _enrich_sheet_page(findings: list[dict], project_id: str):
+    """Обогатить findings: разделить sheet/page, подставить sheet_no из document_graph."""
+    import re
+
+    # Загрузить маппинг page → sheet_no из document_graph
+    graph_path = resolve_project_dir(project_id) / "_output" / "document_graph.json"
+    page_to_sheet: dict[int, str] = {}
+    graph_data = _load_json(graph_path)
+    if graph_data:
+        for p in graph_data.get("pages", []):
+            page_num = p.get("page")
+            sheet_no = p.get("sheet_no")
+            if page_num is not None and sheet_no:
+                page_to_sheet[page_num] = str(sheet_no)
+
+    # Паттерн для парсинга старого формата "Лист X (стр. PDF N)"
+    # Также ловит "Лист 10/Сводная спецификация (стр. PDF 15)" и "Лист 13, 14 (стр. PDF 13–14)"
+    old_format_re = re.compile(
+        r'(?:Лист(?:ы)?)\s*(.+?)\s*\(стр\.?\s*PDF\s*([\d.,\s\-–]+)\)',
+        re.IGNORECASE,
+    )
+    pdf_page_re = re.compile(r'стр\.?\s*(?:PDF\s*)?([\d]+)', re.IGNORECASE)
+
+    for f in findings:
+        sheet_val = f.get("sheet", "")
+        page_val = f.get("page")
+
+        # Если page уже заполнен (новый формат) — только проверить sheet
+        if page_val is not None:
+            # page может быть int или list[int]
+            pages = page_val if isinstance(page_val, list) else [page_val]
+            if not sheet_val or sheet_val == str(page_val):
+                # sheet пустой или совпадает с page → подставить из графа
+                sheets = []
+                for pg in pages:
+                    if isinstance(pg, int) and pg in page_to_sheet:
+                        sheets.append(page_to_sheet[pg])
+                if sheets:
+                    unique = list(dict.fromkeys(sheets))
+                    f["sheet"] = "Лист " + ", ".join(unique) if len(unique) <= 3 else f"Листы {unique[0]}–{unique[-1]}"
+            continue
+
+        # Старый формат: разобрать "Лист X (стр. PDF N)"
+        if not sheet_val:
+            continue
+
+        m = old_format_re.search(sheet_val)
+        if m:
+            # Извлечь page из "(стр. PDF N)"
+            pdf_str = m.group(2).strip().replace('–', '-').replace('—', '-')
+            pages_parsed = []
+            for part in re.split(r'[,\s]+', pdf_str):
+                part = part.strip()
+                if '-' in part:
+                    bounds = part.split('-')
+                    try:
+                        pages_parsed.extend(range(int(bounds[0]), int(bounds[-1]) + 1))
+                    except (ValueError, IndexError):
+                        pass
+                elif part.isdigit():
+                    pages_parsed.append(int(part))
+            if pages_parsed:
+                f["page"] = pages_parsed[0] if len(pages_parsed) == 1 else pages_parsed
+                # Пересобрать sheet из графа если возможно
+                sheets = [page_to_sheet[pg] for pg in pages_parsed if pg in page_to_sheet]
+                if sheets:
+                    unique = list(dict.fromkeys(sheets))
+                    f["sheet"] = "Лист " + ", ".join(unique)
+                else:
+                    # Оставить лист из оригинала, убрав "(стр. PDF ...)"
+                    sheet_part = m.group(1).strip().rstrip(',').rstrip('/')
+                    f["sheet"] = f"Лист {sheet_part}"
+        else:
+            # Попытаться извлечь хотя бы page из текста
+            pm = pdf_page_re.search(sheet_val)
+            if pm:
+                try:
+                    f["page"] = int(pm.group(1))
+                except ValueError:
+                    pass
+
+
 def _load_blocks_data(project_id: str) -> tuple[dict, dict, set]:
     """Загрузить блоки: blocks_by_page, block_info, all_block_ids."""
     import re
@@ -249,8 +382,23 @@ def _parse_pages_from_text(text: str) -> set[int]:
     return pages
 
 
+def _load_sheet_to_page_map(project_id: str) -> dict[str, int]:
+    """Маппинг sheet_no → page из document_graph.json."""
+    graph_path = resolve_project_dir(project_id) / "_output" / "document_graph.json"
+    graph_data = _load_json(graph_path)
+    if not graph_data:
+        return {}
+    result: dict[str, int] = {}
+    for p in graph_data.get("pages", []):
+        sheet_no = p.get("sheet_no")
+        page_num = p.get("page")
+        if sheet_no and page_num is not None:
+            result[str(sheet_no)] = page_num
+    return result
+
+
 def get_optimization_block_map(project_id: str) -> Optional[dict]:
-    """Маппинг optimization_id → [block_ids] через совпадение листов/страниц."""
+    """Маппинг optimization_id → [block_ids] через document_graph и page."""
     import re
 
     opt_path = resolve_project_dir(project_id) / "_output" / "optimization.json"
@@ -259,8 +407,8 @@ def get_optimization_block_map(project_id: str) -> Optional[dict]:
         return None
 
     blocks_by_page, block_info, all_block_ids = _load_blocks_data(project_id)
+    sheet_to_page = _load_sheet_to_page_map(project_id)
 
-    # Паттерн для block_id в тексте
     block_id_re = re.compile(r'\b([A-Z0-9]{3,5}-[A-Z0-9]{3,5}-[A-Z0-9]{2,4})\b')
 
     items = opt_data.get("items", [])
@@ -283,19 +431,35 @@ def get_optimization_block_map(project_id: str) -> Optional[dict]:
                     matched_blocks.append(bid)
                     seen.add(bid)
 
-        # 2. По листам/страницам из section
-        section = item.get("section", "")
-        pages = _parse_pages_from_text(section)
+        # 2. По полю page (если есть — новый формат)
+        page_val = item.get("page")
+        if page_val is not None:
+            pages_list = page_val if isinstance(page_val, list) else [page_val]
+            for pg in pages_list:
+                if isinstance(pg, int):
+                    for bid in blocks_by_page.get(pg, []):
+                        if bid not in seen:
+                            matched_blocks.append(bid)
+                            seen.add(bid)
 
-        # Пробуем прямое совпадение (листы = страницы PDF)
-        # и со смещением +3 (типичный offset: лист 1 = стр. 4)
-        for page in sorted(pages):
-            for offset in (0, 3):
-                p = page + offset
-                for bid in blocks_by_page.get(p, []):
-                    if bid not in seen:
-                        matched_blocks.append(bid)
-                        seen.add(bid)
+        # 3. По листам из section → конвертируем через document_graph
+        if not matched_blocks:
+            section = item.get("section", "")
+            sheet_nums = _parse_pages_from_text(section)
+            for sn in sorted(sheet_nums):
+                # Попробовать sheet_no как ключ в маппинге
+                pdf_page = sheet_to_page.get(str(sn))
+                if pdf_page is not None:
+                    for bid in blocks_by_page.get(pdf_page, []):
+                        if bid not in seen:
+                            matched_blocks.append(bid)
+                            seen.add(bid)
+                else:
+                    # Fallback: прямое совпадение (лист = страница PDF)
+                    for bid in blocks_by_page.get(sn, []):
+                        if bid not in seen:
+                            matched_blocks.append(bid)
+                            seen.add(bid)
 
         if matched_blocks:
             result[oid] = matched_blocks
